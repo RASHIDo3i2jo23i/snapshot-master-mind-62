@@ -162,7 +162,6 @@ export class AsykEngine {
     if (!p) return null;
     p.fillStyle = "#0d4a4e";
     p.fillRect(0, 0, 120, 120);
-    p.strokeStyle = "rgba(214, race, 0, 0)";
     // qoshqar muyiz (ram horn) style ornament
     p.strokeStyle = "rgba(226, 183, 90, 0.22)";
     p.lineWidth = 3;
