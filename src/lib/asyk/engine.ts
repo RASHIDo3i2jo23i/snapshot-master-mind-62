@@ -80,7 +80,7 @@ export interface EndResult {
   score: number;
   coins: number;
   throwsLeft: number;
-  pvp?: PvpState;
+  pvp?: PvpState | undefined;
 }
 
 export interface EngineCallbacks {
