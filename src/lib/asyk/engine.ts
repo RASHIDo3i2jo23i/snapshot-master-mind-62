@@ -448,7 +448,7 @@ export class AsykEngine {
           this.addText(
             a.x,
             a.y - 30,
-            PRAISE[Math.floor(Math.random() * PRAISE.length)],
+            PRAISE[Math.floor(Math.random() * PRAISE.length)] ?? PRAISE[0]!,
             gold ? "#ffd766" : "#ffe9a8",
           );
           if (gold) this.addText(a.x, a.y - 74, "+300", "#ffd766");
