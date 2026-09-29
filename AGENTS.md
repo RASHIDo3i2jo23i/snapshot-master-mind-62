@@ -8,3 +8,7 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+## Architecture rules
+
+- Игровая логика Асық ату живёт в `src/lib/asyk/` (engine.ts — физика и рендер canvas, audio.ts — Web Audio, i18n.ts — тексты), React только показывает экраны. Причина: игровой цикл на rAF не должен вызывать перерисовку React.
