@@ -744,6 +744,7 @@ export class AsykEngine {
     const aim = this.aimVector();
     if (!aim) return;
     const { pts, land } = this.predict(aim);
+    if (!land) return;
 
     ctx.save();
     // pull-back line
