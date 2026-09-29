@@ -1,40 +1,57 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AsykEngine, type SakaKind, W, H } from "@/lib/asyk/engine";
+import { AsykEngine, type EndResult, type PvpState, W, H } from "@/lib/asyk/engine";
 import { Sfx } from "@/lib/asyk/audio";
 import { LANGS, T, type Lang } from "@/lib/asyk/i18n";
+import { ALBUM_UNLOCK, ALSHY_LEVEL, FREE_LEVEL, LEVELS, PVP_LEVEL, type LevelDef, type ModeId } from "@/lib/asyk/levels";
+import { SKINS, SKIN_IDS, type SkinId } from "@/lib/asyk/skins";
+import { addRecord, DEFAULT_PROGRESS, loadProgress, saveProgress, unlockedLevel, type Progress } from "@/lib/asyk/progress";
 
-type Screen = "menu" | "playing" | "result";
+type Screen = "menu" | "levels" | "shop" | "album" | "records" | "playing" | "result";
 
-const LS_BEST = "asyk_best_score";
 const LS_LANG = "asyk_lang";
+
+function levelFor(mode: ModeId, idx: number): LevelDef {
+  if (mode === "campaign") return LEVELS[idx] ?? FREE_LEVEL;
+  if (mode === "alshy") return ALSHY_LEVEL;
+  if (mode === "pvp") return PVP_LEVEL;
+  return FREE_LEVEL;
+}
 
 export default function AsykGame() {
   const [lang, setLang] = useState<Lang>("kk");
   const [screen, setScreen] = useState<Screen>("menu");
-  const [saka, setSaka] = useState<SakaKind>("normal");
+  const [mode, setMode] = useState<ModeId>("free");
+  const [levelIdx, setLevelIdx] = useState(0);
+  const [runId, setRunId] = useState(0);
   const [score, setScore] = useState(0);
   const [throwsLeft, setThrowsLeft] = useState(5);
-  const [best, setBest] = useState(0);
-  const [won, setWon] = useState(false);
-  const [record, setRecord] = useState(false);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [pvp, setPvp] = useState<PvpState | null>(null);
+  const [result, setResult] = useState<(EndResult & { stars: number; rank: number }) | null>(null);
+  const [progress, setProgress] = useState<Progress>(DEFAULT_PROGRESS);
   const [soundOn, setSoundOn] = useState(true);
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [recTab, setRecTab] = useState<ModeId>("free");
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const engineRef = useRef<AsykEngine | null>(null);
   const sfxRef = useRef<Sfx | null>(null);
-
+  const progressRef = useRef(progress);
+  progressRef.current = progress;
   const t = T[lang];
 
   useEffect(() => {
+    setProgress(loadProgress());
     try {
-      const b = Number(localStorage.getItem(LS_BEST) ?? "0");
-      if (!Number.isNaN(b)) setBest(b);
       const l = localStorage.getItem(LS_LANG) as Lang | null;
       if (l && LANGS.some((x) => x.code === l)) setLang(l);
     } catch {
-      /* storage unavailable */
+      /* ignore */
     }
+  }, []);
+
+  const updateProgress = useCallback((p: Progress) => {
+    setProgress(p);
+    saveProgress(p);
   }, []);
 
   useEffect(() => {
@@ -43,52 +60,55 @@ export default function AsykGame() {
     if (!soundOn) sfxRef.current.stopWhistle();
   }, [soundOn]);
 
-  const handleEnd = useCallback((win: boolean, finalScore: number) => {
-    setWon(win);
-    setScore(finalScore);
-    setBest((prev) => {
-      if (finalScore > prev) {
-        setRecord(true);
-        try {
-          localStorage.setItem(LS_BEST, String(finalScore));
-        } catch {
-          /* ignore */
-        }
-        return finalScore;
+  const handleEnd = useCallback(
+    (r: EndResult) => {
+      let p = { ...progressRef.current, coins: progressRef.current.coins + r.coins };
+      let stars = 0;
+      let rank = 0;
+      if (mode === "campaign" && r.win) {
+        stars = 1 + (r.throwsLeft >= 1 ? 1 : 0) + (r.throwsLeft >= 2 ? 1 : 0);
+        const n = levelIdx + 1;
+        p = { ...p, stars: { ...p.stars, [n]: Math.max(p.stars[n] ?? 0, stars) } };
       }
-      setRecord(false);
-      return prev;
-    });
-    setScreen("result");
-  }, []);
+      if (mode !== "pvp" && r.score > 0) {
+        const res = addRecord(p, mode, r.score, T[lang].player);
+        p = res.progress;
+        rank = res.rank;
+      }
+      updateProgress(p);
+      setResult({ ...r, stars, rank });
+      setScreen("result");
+    },
+    [mode, levelIdx, lang, updateProgress],
+  );
 
-  // mount the engine while playing
   useEffect(() => {
     if (screen !== "playing" || !canvasRef.current) return;
     const sfx = sfxRef.current ?? new Sfx();
     sfxRef.current = sfx;
     sfx.enabled = soundOn;
-    const engine = new AsykEngine(canvasRef.current, saka, sfx, {
-      onScore: setScore,
-      onThrows: setThrowsLeft,
-      onEnd: handleEnd,
-    });
-    engineRef.current = engine;
-    return () => {
-      engine.destroy();
-      engineRef.current = null;
-    };
+    const engine = new AsykEngine(
+      canvasRef.current,
+      { mode, level: levelFor(mode, levelIdx), skin: progressRef.current.skin },
+      sfx,
+      { onScore: setScore, onThrows: setThrowsLeft, onTime: setTimeLeft, onPvp: setPvp, onEnd: handleEnd },
+    );
+    return () => engine.destroy();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen, saka]);
+  }, [screen, runId]);
 
   useEffect(() => () => sfxRef.current?.dispose(), []);
 
-  const startGame = () => {
+  const start = (m: ModeId, idx = 0) => {
     sfxRef.current?.resume();
     sfxRef.current?.click();
+    setMode(m);
+    setLevelIdx(idx);
     setScore(0);
-    setThrowsLeft(5);
-    setRecord(false);
+    setThrowsLeft(levelFor(m, idx).throws);
+    setPvp(null);
+    setTimeLeft(null);
+    setRunId((n) => n + 1);
     setScreen("playing");
   };
 
@@ -101,9 +121,16 @@ export default function AsykGame() {
     }
   };
 
+  const go = (s: Screen) => {
+    sfxRef.current?.click();
+    setScreen(s);
+  };
+
+  const unlocked = unlockedLevel(progress);
+  const bestFree = progress.records.free?.[0]?.score ?? 0;
+
   return (
     <div className="relative flex min-h-screen w-full flex-col items-center bg-[#08383b] px-3 py-4 text-[#f4ecd8]">
-      {/* top bar */}
       <div className="flex w-full max-w-[560px] items-center justify-between gap-2">
         <div className="flex items-center gap-1 rounded-full border border-[#e2b75a]/40 bg-black/25 p-1">
           {LANGS.map((l) => (
@@ -118,122 +145,262 @@ export default function AsykGame() {
             </button>
           ))}
         </div>
-        <button
-          onClick={() => setSoundOn((s) => !s)}
-          className="rounded-full border border-[#e2b75a]/40 bg-black/25 px-3 py-1.5 text-xs font-semibold"
-          aria-label={t.sound}
-        >
-          {soundOn ? "🔊" : "🔇"} {t.sound}
-        </button>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full border border-[#e2b75a]/40 bg-black/25 px-3 py-1.5 text-xs font-bold text-[#ffd766]">
+            ◈ {progress.coins} {t.coins}
+          </span>
+          <button
+            onClick={() => setSoundOn((s) => !s)}
+            className="rounded-full border border-[#e2b75a]/40 bg-black/25 px-3 py-1.5 text-xs font-semibold"
+            aria-label={t.sound}
+          >
+            {soundOn ? "🔊" : "🔇"}
+          </button>
+        </div>
       </div>
 
-      {/* stage */}
       <div className="relative mt-3 w-full max-w-[560px]">
         <div
           className="relative overflow-hidden rounded-3xl border-4 border-[#e2b75a]/70 shadow-[0_18px_60px_rgba(0,0,0,0.55)]"
           style={{ aspectRatio: `${W} / ${H}` }}
         >
           {screen === "playing" ? (
-            <canvas ref={canvasRef} className="block h-full w-full touch-none select-none" />
+            <canvas key={runId} ref={canvasRef} className="block h-full w-full touch-none select-none" />
           ) : (
             <div className="absolute inset-0 bg-[#0d4a4e]" />
           )}
 
           {screen === "playing" && (
-            <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-3">
-              <Badge label={t.score} value={score} />
-              <button
-                onClick={() => setScreen("menu")}
-                className="pointer-events-auto rounded-full border border-[#e2b75a]/60 bg-black/45 px-3 py-1.5 text-xs font-semibold"
-              >
-                {t.menu}
-              </button>
-              <Badge label={t.throws} value={throwsLeft} />
+            <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-3">
+              {mode === "pvp" && pvp ? (
+                <>
+                  <Badge label={`${t.player} 1${pvp.turn === 0 ? " ◀" : ""}`} value={`${pvp.knocked[0]} · ${pvp.left[0]}`} active={pvp.turn === 0} />
+                  <MenuBtn onClick={() => go("menu")} label={t.menu} />
+                  <Badge label={`${pvp.turn === 1 ? "▶ " : ""}${t.player} 2`} value={`${pvp.knocked[1]} · ${pvp.left[1]}`} active={pvp.turn === 1} />
+                </>
+              ) : (
+                <>
+                  <Badge label={t.score} value={score} />
+                  <div className="flex flex-col items-center gap-1">
+                    <MenuBtn onClick={() => go("menu")} label={t.menu} />
+                    {mode === "campaign" && (
+                      <span className="rounded-full bg-black/45 px-2 py-0.5 text-[10px] text-[#7fe3d0]">
+                        {t.level} {levelIdx + 1}
+                      </span>
+                    )}
+                    {timeLeft !== null && (
+                      <span className={`rounded-full bg-black/55 px-3 py-0.5 font-serif text-lg font-bold ${timeLeft <= 5 ? "text-[#ff8a7a]" : "text-[#ffd766]"}`}>
+                        ⏱ {timeLeft}
+                      </span>
+                    )}
+                  </div>
+                  <Badge label={t.throws} value={throwsLeft} />
+                </>
+              )}
             </div>
           )}
 
           {screen === "menu" && (
             <Overlay>
               <Ornament />
-              <h1 className="text-center font-serif text-4xl font-bold tracking-wide text-[#ffd766] drop-shadow sm:text-5xl">
-                {t.title}
-              </h1>
+              <h1 className="text-center font-serif text-4xl font-bold tracking-wide text-[#ffd766] drop-shadow sm:text-5xl">{t.title}</h1>
               <p className="mt-1 text-center text-sm text-[#bff0e4]">{t.subtitle}</p>
-              <p className="mt-4 text-center text-xs text-[#f4ecd8]/70">
-                {t.best}: <span className="font-bold text-[#ffd766]">{best}</span>
+              <p className="mt-2 text-center text-xs text-[#f4ecd8]/70">
+                {t.best}: <span className="font-bold text-[#ffd766]">{bestFree}</span> · {t.skinName[progress.skin]}
               </p>
-
-              <p className="mt-5 text-center text-xs font-semibold uppercase tracking-widest text-[#7fe3d0]">
-                {t.chooseSaka}
-              </p>
-              <div className="mt-2 grid w-full gap-2">
-                <SakaCard
-                  active={saka === "normal"}
-                  onClick={() => setSaka("normal")}
-                  title={t.sakaNormal}
-                  desc={t.sakaNormalDesc}
-                  tone="#e8d5a8"
-                />
-                <SakaCard
-                  active={saka === "lead"}
-                  onClick={() => setSaka("lead")}
-                  title={t.sakaLead}
-                  desc={t.sakaLeadDesc}
-                  tone="#aab3bf"
-                />
+              <div className="mt-4 grid w-full gap-2">
+                <ModeCard title={t.modeFree} desc={t.modeFreeDesc} onClick={() => start("free")} primary />
+                <ModeCard title={t.modeCampaign} desc={t.modeCampaignDesc} onClick={() => go("levels")} />
+                <ModeCard title={t.modePvp} desc={t.modePvpDesc} onClick={() => start("pvp")} />
+                <ModeCard title={t.modeAlshy} desc={t.modeAlshyDesc} onClick={() => start("alshy")} />
               </div>
-
-              <button
-                onClick={startGame}
-                className="mt-5 w-full rounded-2xl bg-gradient-to-b from-[#ffd766] to-[#e2b75a] px-6 py-3 text-lg font-bold text-[#08383b] shadow-lg transition-transform hover:scale-[1.02] active:scale-95"
-              >
-                {t.play}
-              </button>
-              <button
-                onClick={() => setAboutOpen(true)}
-                className="mt-2 rounded-xl border border-[#7fe3d0]/50 px-4 py-2 text-xs font-semibold text-[#bff0e4]"
-              >
+              <div className="mt-3 grid w-full grid-cols-3 gap-2">
+                <SmallBtn onClick={() => go("shop")}>{t.shop}</SmallBtn>
+                <SmallBtn onClick={() => go("album")}>{t.album}</SmallBtn>
+                <SmallBtn onClick={() => go("records")}>{t.records}</SmallBtn>
+              </div>
+              <button onClick={() => setAboutOpen(true)} className="mt-2 text-xs font-semibold text-[#7fe3d0] underline-offset-2 hover:underline">
                 {t.about}
               </button>
-              <p className="mt-4 max-w-[340px] text-center text-[11px] leading-relaxed text-[#f4ecd8]/60">
-                <span className="font-semibold text-[#7fe3d0]">{t.howTo}: </span>
-                {t.howToText}
+              <p className="mt-3 max-w-[340px] text-center text-[11px] leading-relaxed text-[#f4ecd8]/60">
+                <span className="font-semibold text-[#7fe3d0]">{t.facesTitle}: </span>
+                {t.facesText}
               </p>
             </Overlay>
           )}
 
-          {screen === "result" && (
+          {screen === "levels" && (
+            <Overlay>
+              <h2 className="font-serif text-3xl font-bold text-[#ffd766]">{t.levels}</h2>
+              <div className="mt-4 grid w-full grid-cols-3 gap-2">
+                {LEVELS.map((_, i) => {
+                  const n = i + 1;
+                  const open = n <= unlocked;
+                  const st = progress.stars[n] ?? 0;
+                  return (
+                    <button
+                      key={n}
+                      disabled={!open}
+                      onClick={() => start("campaign", i)}
+                      className={`rounded-2xl border-2 px-2 py-3 text-center transition-colors ${
+                        open ? "border-[#e2b75a]/70 bg-black/25 hover:bg-[#ffd766]/10" : "border-white/10 bg-black/30 opacity-45"
+                      }`}
+                    >
+                      <div className="font-serif text-2xl font-bold text-[#ffd766]">{open ? n : "🔒"}</div>
+                      <div className="text-[10px] text-[#bff0e4]">{t.levelHints[i]}</div>
+                      <div className="mt-1 text-xs tracking-widest text-[#ffd766]">
+                        {"★".repeat(st)}
+                        <span className="text-white/25">{"★".repeat(3 - st)}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <BackBtn onClick={() => go("menu")} label={t.back} />
+            </Overlay>
+          )}
+
+          {screen === "shop" && (
+            <Overlay>
+              <h2 className="font-serif text-3xl font-bold text-[#ffd766]">{t.shop}</h2>
+              <p className="mt-1 text-sm text-[#ffd766]">◈ {progress.coins} {t.coins}</p>
+              <div className="mt-4 grid w-full gap-2">
+                {SKIN_IDS.map((id) => (
+                  <SkinRow
+                    key={id}
+                    id={id}
+                    name={t.skinName[id]}
+                    desc={t.skinDesc[id]}
+                    owned={progress.owned.includes(id)}
+                    equipped={progress.skin === id}
+                    canBuy={progress.coins >= SKINS[id].price}
+                    labels={{ buy: t.buy, equip: t.equip, equipped: t.equipped, coins: t.coins }}
+                    onBuy={() => {
+                      sfxRef.current?.chime(true);
+                      updateProgress({ ...progress, coins: progress.coins - SKINS[id].price, owned: [...progress.owned, id], skin: id });
+                    }}
+                    onEquip={() => updateProgress({ ...progress, skin: id })}
+                  />
+                ))}
+              </div>
+              <BackBtn onClick={() => go("menu")} label={t.back} />
+            </Overlay>
+          )}
+
+          {screen === "album" && (
+            <Overlay>
+              <h2 className="font-serif text-3xl font-bold text-[#ffd766]">{t.album}</h2>
+              <div className="mt-4 grid w-full grid-cols-2 gap-2">
+                {t.albumCards.map((c, i) => {
+                  const need = ALBUM_UNLOCK[i] ?? 99;
+                  const open = (progress.stars[need] ?? 0) > 0;
+                  return (
+                    <div
+                      key={c.title}
+                      className={`rounded-2xl border-2 p-3 ${open ? "border-[#e2b75a]/70 bg-black/25" : "border-white/10 bg-black/30"}`}
+                    >
+                      <div className="font-serif text-base font-bold text-[#ffd766]">{open ? c.title : "🔒 " + t.locked}</div>
+                      <p className="mt-1 text-[11px] leading-snug text-[#f4ecd8]/80">{open ? c.text : `${t.unlockAt} ${need}`}</p>
+                    </div>
+                  );
+                })}
+              </div>
+              <BackBtn onClick={() => go("menu")} label={t.back} />
+            </Overlay>
+          )}
+
+          {screen === "records" && (
+            <Overlay>
+              <h2 className="font-serif text-3xl font-bold text-[#ffd766]">{t.records}</h2>
+              <label className="mt-3 flex w-full items-center gap-2 text-xs text-[#bff0e4]">
+                {t.yourName}
+                <input
+                  value={progress.name}
+                  maxLength={16}
+                  placeholder={t.player}
+                  onChange={(e) => updateProgress({ ...progress, name: e.target.value })}
+                  className="flex-1 rounded-xl border border-[#e2b75a]/50 bg-black/30 px-3 py-1.5 text-sm text-[#f4ecd8] outline-none focus:border-[#ffd766]"
+                />
+              </label>
+              <div className="mt-3 flex w-full gap-1">
+                {(["free", "campaign", "alshy"] as ModeId[]).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setRecTab(m)}
+                    className={`flex-1 rounded-xl px-2 py-1.5 text-xs font-semibold ${recTab === m ? "bg-[#e2b75a] text-[#08383b]" : "bg-black/25 text-[#f4ecd8]/80"}`}
+                  >
+                    {m === "free" ? t.modeFree : m === "campaign" ? t.modeCampaign : t.modeAlshy}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-3 w-full overflow-hidden rounded-2xl border border-[#e2b75a]/40">
+                {(progress.records[recTab] ?? []).length === 0 ? (
+                  <p className="p-4 text-center text-sm text-[#f4ecd8]/60">{t.noRecords}</p>
+                ) : (
+                  (progress.records[recTab] ?? []).map((r, i) => (
+                    <div key={i} className={`flex items-center gap-3 px-3 py-2 text-sm ${i % 2 ? "bg-black/15" : "bg-black/30"}`}>
+                      <span className={`w-6 font-serif font-bold ${i < 3 ? "text-[#ffd766]" : "text-[#bff0e4]"}`}>{["🥇", "🥈", "🥉"][i] ?? i + 1}</span>
+                      <span className="flex-1 truncate">{r.name}</span>
+                      <span className="text-[10px] text-[#f4ecd8]/50">{r.date}</span>
+                      <span className="w-14 text-right font-bold text-[#ffd766]">{r.score}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+              <BackBtn onClick={() => go("menu")} label={t.back} />
+            </Overlay>
+          )}
+
+          {screen === "result" && result && (
             <Overlay>
               <Ornament />
-              <h2 className="font-serif text-4xl font-bold text-[#ffd766]">{won ? t.win : t.lose}</h2>
-              <p className="mt-3 text-sm text-[#bff0e4]">{t.yourScore}</p>
-              <p className="font-serif text-6xl font-bold text-[#f4ecd8]">{score}</p>
-              {record && <p className="mt-2 text-sm font-bold text-[#ffd766]">★ {t.newRecord}</p>}
-              <p className="mt-2 text-xs text-[#f4ecd8]/70">
-                {t.best}: <span className="font-bold text-[#ffd766]">{best}</span>
+              {mode === "pvp" && result.pvp ? (
+                <>
+                  <h2 className="text-center font-serif text-4xl font-bold text-[#ffd766]">
+                    {t.player} {result.win ? 1 : 2} {t.pvpWinner}
+                  </h2>
+                  <div className="mt-4 grid w-full grid-cols-2 gap-2 text-center">
+                    {[0, 1].map((i) => (
+                      <div key={i} className="rounded-2xl border border-[#e2b75a]/50 bg-black/25 p-3">
+                        <div className="text-xs text-[#7fe3d0]">{t.player} {i + 1}</div>
+                        <div className="font-serif text-4xl font-bold">{result.pvp!.knocked[i]}</div>
+                        <div className="text-[11px] text-[#f4ecd8]/60">{t.knocked} · {result.pvp!.points[i]}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <h2 className="font-serif text-4xl font-bold text-[#ffd766]">{result.win ? t.win : t.lose}</h2>
+                  {mode === "campaign" && (
+                    <p className="mt-1 text-3xl tracking-widest text-[#ffd766]">
+                      {"★".repeat(result.stars)}
+                      <span className="text-white/25">{"★".repeat(3 - result.stars)}</span>
+                    </p>
+                  )}
+                  <p className="mt-3 text-sm text-[#bff0e4]">{t.yourScore}</p>
+                  <p className="font-serif text-6xl font-bold text-[#f4ecd8]">{result.score}</p>
+                  {result.rank === 1 && <p className="mt-2 text-sm font-bold text-[#ffd766]">★ {t.newRecord}</p>}
+                  {result.rank > 1 && <p className="mt-2 text-xs text-[#bff0e4]">{t.rank}: #{result.rank}</p>}
+                </>
+              )}
+              <p className="mt-2 text-sm text-[#ffd766]">
+                {t.earned}: +{result.coins} {t.coins}
               </p>
-              <button
-                onClick={startGame}
-                className="mt-6 w-full max-w-[280px] rounded-2xl bg-gradient-to-b from-[#ffd766] to-[#e2b75a] px-6 py-3 text-lg font-bold text-[#08383b] shadow-lg transition-transform hover:scale-[1.02] active:scale-95"
-              >
+              {mode === "campaign" && result.win && levelIdx + 1 < LEVELS.length && (
+                <PrimaryBtn onClick={() => start("campaign", levelIdx + 1)}>{t.next}</PrimaryBtn>
+              )}
+              <PrimaryBtn onClick={() => start(mode, levelIdx)} secondary={mode === "campaign" && result.win}>
                 {t.again}
-              </button>
-              <button
-                onClick={() => setScreen("menu")}
-                className="mt-2 rounded-xl border border-[#7fe3d0]/50 px-4 py-2 text-xs font-semibold text-[#bff0e4]"
-              >
-                {t.toMenu}
-              </button>
+              </PrimaryBtn>
+              <BackBtn onClick={() => go("menu")} label={t.toMenu} />
             </Overlay>
           )}
         </div>
       </div>
 
       {aboutOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-          onClick={() => setAboutOpen(false)}
-        >
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setAboutOpen(false)}>
           <div
             className="max-h-[80vh] w-full max-w-[460px] overflow-y-auto rounded-3xl border-2 border-[#e2b75a] bg-[#0d4a4e] p-6 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
@@ -241,10 +408,12 @@ export default function AsykGame() {
             <Ornament />
             <h3 className="text-center font-serif text-2xl font-bold text-[#ffd766]">{t.aboutTitle}</h3>
             <p className="mt-4 text-sm leading-relaxed text-[#f4ecd8]/90">{t.aboutText}</p>
-            <button
-              onClick={() => setAboutOpen(false)}
-              className="mt-6 w-full rounded-2xl bg-[#e2b75a] px-6 py-2.5 font-bold text-[#08383b]"
-            >
+            <p className="mt-3 text-sm leading-relaxed text-[#bff0e4]">{t.facesText}</p>
+            <p className="mt-3 text-xs leading-relaxed text-[#f4ecd8]/70">
+              <span className="font-semibold">{t.howTo}: </span>
+              {t.howToText}
+            </p>
+            <button onClick={() => setAboutOpen(false)} className="mt-6 w-full rounded-2xl bg-[#e2b75a] px-6 py-2.5 font-bold text-[#08383b]">
               {t.close}
             </button>
           </div>
@@ -254,20 +423,28 @@ export default function AsykGame() {
   );
 }
 
-function Badge({ label, value }: { label: string; value: number }) {
+function Badge({ label, value, active }: { label: string; value: number | string; active?: boolean }) {
   return (
-    <div className="rounded-2xl border border-[#e2b75a]/60 bg-black/45 px-4 py-1.5 text-center">
+    <div className={`rounded-2xl border bg-black/45 px-4 py-1.5 text-center ${active ? "border-[#ffd766]" : "border-[#e2b75a]/60"}`}>
       <div className="text-[10px] uppercase tracking-widest text-[#7fe3d0]">{label}</div>
       <div className="font-serif text-xl font-bold text-[#ffd766]">{value}</div>
     </div>
   );
 }
 
+function MenuBtn({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button onClick={onClick} className="pointer-events-auto rounded-full border border-[#e2b75a]/60 bg-black/45 px-3 py-1.5 text-xs font-semibold">
+      {label}
+    </button>
+  );
+}
+
 function Overlay({ children }: { children: React.ReactNode }) {
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center overflow-y-auto bg-[#0d4a4e] px-6 py-8">
+    <div className="absolute inset-0 overflow-y-auto bg-[#0d4a4e] px-5 py-6">
       <div className="pointer-events-none absolute inset-0 opacity-25 [background:radial-gradient(circle_at_50%_30%,rgba(127,227,208,0.35),transparent_60%)]" />
-      <div className="relative flex w-full max-w-[380px] flex-col items-center">{children}</div>
+      <div className="relative mx-auto flex min-h-full w-full max-w-[400px] flex-col items-center justify-center">{children}</div>
     </div>
   );
 }
@@ -280,34 +457,90 @@ function Ornament() {
   );
 }
 
-function SakaCard({
-  active,
-  onClick,
-  title,
-  desc,
-  tone,
-}: {
-  active: boolean;
-  onClick: () => void;
-  title: string;
-  desc: string;
-  tone: string;
-}) {
+function ModeCard({ title, desc, onClick, primary }: { title: string; desc: string; onClick: () => void; primary?: boolean }) {
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left transition-colors ${
-        active ? "border-[#ffd766] bg-[#ffd766]/10" : "border-[#7fe3d0]/25 bg-black/20"
+      className={`rounded-2xl border-2 px-4 py-2.5 text-left transition-transform hover:scale-[1.01] active:scale-95 ${
+        primary ? "border-[#ffd766] bg-gradient-to-b from-[#ffd766] to-[#e2b75a] text-[#08383b]" : "border-[#7fe3d0]/30 bg-black/20"
       }`}
     >
-      <span
-        className="h-7 w-9 shrink-0 rounded-[45%] border border-black/30"
-        style={{ background: `radial-gradient(circle at 35% 30%, #fff8, ${tone})` }}
-      />
-      <span>
-        <span className="block text-sm font-bold text-[#f4ecd8]">{title}</span>
-        <span className="block text-[11px] text-[#f4ecd8]/60">{desc}</span>
-      </span>
+      <span className={`block text-base font-bold ${primary ? "" : "text-[#f4ecd8]"}`}>{title}</span>
+      <span className={`block text-[11px] ${primary ? "text-[#08383b]/75" : "text-[#f4ecd8]/60"}`}>{desc}</span>
     </button>
+  );
+}
+
+function SmallBtn({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button onClick={onClick} className="rounded-xl border border-[#e2b75a]/50 bg-black/20 px-2 py-2 text-xs font-semibold text-[#ffd766]">
+      {children}
+    </button>
+  );
+}
+
+function BackBtn({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button onClick={onClick} className="mt-3 rounded-xl border border-[#7fe3d0]/50 px-4 py-2 text-xs font-semibold text-[#bff0e4]">
+      {label}
+    </button>
+  );
+}
+
+function PrimaryBtn({ onClick, children, secondary }: { onClick: () => void; children: React.ReactNode; secondary?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`mt-3 w-full max-w-[280px] rounded-2xl px-6 py-3 text-lg font-bold shadow-lg transition-transform hover:scale-[1.02] active:scale-95 ${
+        secondary ? "border-2 border-[#e2b75a] text-[#ffd766]" : "bg-gradient-to-b from-[#ffd766] to-[#e2b75a] text-[#08383b]"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SkinRow(props: {
+  id: SkinId;
+  name: string;
+  desc: string;
+  owned: boolean;
+  equipped: boolean;
+  canBuy: boolean;
+  labels: { buy: string; equip: string; equipped: string; coins: string };
+  onBuy: () => void;
+  onEquip: () => void;
+}) {
+  const sk = SKINS[props.id];
+  return (
+    <div className={`flex items-center gap-3 rounded-2xl border-2 px-3 py-2.5 ${props.equipped ? "border-[#ffd766] bg-[#ffd766]/10" : "border-[#7fe3d0]/25 bg-black/20"}`}>
+      <span
+        className="h-8 w-11 shrink-0 rounded-[40%] border-2"
+        style={{
+          background: `linear-gradient(135deg, ${sk.light}, ${sk.fill} 60%, ${sk.edge})`,
+          borderColor: sk.edge,
+          boxShadow: sk.glow ? `0 0 14px ${sk.glow}` : undefined,
+        }}
+      />
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-bold text-[#f4ecd8]">{props.name}</span>
+        <span className="block text-[11px] text-[#f4ecd8]/60">{props.desc}</span>
+      </span>
+      {props.equipped ? (
+        <span className="text-xs font-bold text-[#ffd766]">✓ {props.labels.equipped}</span>
+      ) : props.owned ? (
+        <button onClick={props.onEquip} className="rounded-xl border border-[#e2b75a] px-3 py-1.5 text-xs font-bold text-[#ffd766]">
+          {props.labels.equip}
+        </button>
+      ) : (
+        <button
+          disabled={!props.canBuy}
+          onClick={props.onBuy}
+          className="rounded-xl bg-[#e2b75a] px-3 py-1.5 text-xs font-bold text-[#08383b] disabled:opacity-40"
+        >
+          {sk.price} ◈
+        </button>
+      )}
+    </div>
   );
 }
