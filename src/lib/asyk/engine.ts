@@ -696,7 +696,6 @@ export class AsykEngine {
       this.boneShape(ctx, s.r, "#8f97a3", "#454b55", "#b9c1cb");
       ctx.beginPath();
       ctx.ellipse(0, 0, s.r * 0.34, s.r * 0.22, 0, 0, Math.PI * 2);
-      ctx.fillStyle = "#5a6personal";
       ctx.fillStyle = "#5a626d";
       ctx.fill();
     } else {
