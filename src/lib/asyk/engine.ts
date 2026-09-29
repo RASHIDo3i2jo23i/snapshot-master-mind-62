@@ -464,7 +464,7 @@ export class AsykEngine {
       for (let j = i + 1; j < this.asyks.length; j++) {
         const a = this.asyks[i];
         const b = this.asyks[j];
-        if (a.gone || b.gone) continue;
+        if (!a || !b || a.gone || b.gone) continue;
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const d = Math.hypot(dx, dy);
