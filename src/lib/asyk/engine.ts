@@ -1,4 +1,7 @@
 import { Sfx } from "./audio";
+import { FACE_MULT, FACE_NAME, rollFace, type Face } from "./faces";
+import type { LevelDef, ModeId } from "./levels";
+import { SKINS, type Skin, type SkinId } from "./skins";
 
 export const W = 800;
 export const H = 1000;
@@ -8,12 +11,11 @@ const R = 228;
 const START_X = 400;
 const START_Y = 880;
 
-const G = 2000; // gravity on the z axis
+const G = 2000;
 const SPEED_MAX = 1500;
 const VZ_MAX = 640;
 const DRAG_MAX = 230;
 
-export type SakaKind = "normal" | "lead";
 export type AsykKind = "plain" | "gold";
 
 export const PRAISE = ["Жарайсың!", "Керемет!", "Шебер!", "Мерген!"];
@@ -21,14 +23,27 @@ export const PRAISE = ["Жарайсың!", "Керемет!", "Шебер!", "�
 interface Asyk {
   x: number;
   y: number;
+  hx: number;
+  hy: number;
+  ph: number;
   vx: number;
   vy: number;
   r: number;
   kind: AsykKind;
+  face: Face;
   angle: number;
   spin: number;
   out: boolean;
   gone: boolean;
+  hit: boolean;
+  cool: number;
+}
+
+interface Stone {
+  x: number;
+  y: number;
+  r: number;
+  seed: number;
 }
 
 interface Particle {
@@ -50,21 +65,44 @@ interface FloatText {
   text: string;
   life: number;
   color: string;
+  size: number;
+}
+
+export interface PvpState {
+  turn: 0 | 1;
+  knocked: [number, number];
+  points: [number, number];
+  left: [number, number];
+}
+
+export interface EndResult {
+  win: boolean;
+  score: number;
+  coins: number;
+  throwsLeft: number;
+  pvp?: PvpState | undefined;
 }
 
 export interface EngineCallbacks {
   onScore: (score: number) => void;
   onThrows: (left: number) => void;
-  onEnd: (win: boolean, score: number) => void;
+  onTime: (sec: number | null) => void;
+  onPvp: (s: PvpState) => void;
+  onEnd: (r: EndResult) => void;
 }
 
-const SAKA_STATS: Record<SakaKind, { speed: number; impulse: number; color: string }> = {
-  normal: { speed: 1, impulse: 1, color: "#e8d5a8" },
-  lead: { speed: 0.78, impulse: 1.45, color: "#8f97a3" },
-};
+export interface EngineOptions {
+  mode: ModeId;
+  level: LevelDef;
+  skin: SkinId;
+}
 
 function rnd(a: number, b: number) {
   return a + Math.random() * (b - a);
+}
+
+function polar(a: number, d: number) {
+  return { x: CX + Math.cos(a) * d, y: CY + Math.sin(a) * d * 0.85 };
 }
 
 export class AsykEngine {
@@ -76,32 +114,47 @@ export class AsykEngine {
 
   private sfx: Sfx;
   private cb: EngineCallbacks;
-  private kind: SakaKind;
+  private opts: EngineOptions;
+  private skin: Skin;
 
   private asyks: Asyk[] = [];
+  private stones: Stone[] = [];
   private particles: Particle[] = [];
   private texts: FloatText[] = [];
+  private trail: { x: number; y: number }[] = [];
 
   private saka = { x: START_X, y: START_Y, z: 0, vx: 0, vy: 0, vz: 0, r: 26, active: false, grounded: false, angle: 0 };
   private aiming = false;
   private aimPoint = { x: START_X, y: START_Y };
 
   private score = 0;
+  private coins = 0;
+  private pending = 0;
   private throwsLeft = 5;
+  private timeLeft: number | null = null;
+  private lastSec = -1;
   private settleTimer = 0;
   private shake = 0;
   private slowmo = 0;
   private finished = false;
   private pattern: CanvasPattern | null = null;
+  private groundDots: { x: number; y: number; r: number; l: boolean }[] = [];
+  private pvp: PvpState = { turn: 0, knocked: [0, 0], points: [0, 0], left: [5, 5] };
 
-  constructor(canvas: HTMLCanvasElement, kind: SakaKind, sfx: Sfx, cb: EngineCallbacks) {
+  constructor(canvas: HTMLCanvasElement, opts: EngineOptions, sfx: Sfx, cb: EngineCallbacks) {
     this.canvas = canvas;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("canvas 2d context unavailable");
     this.ctx = ctx;
-    this.kind = kind;
+    this.opts = opts;
+    this.skin = SKINS[opts.skin];
     this.sfx = sfx;
     this.cb = cb;
+    for (let i = 0; i < 160; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = Math.sqrt(Math.random()) * R;
+      this.groundDots.push({ x: Math.cos(a) * d, y: Math.sin(a) * d, r: rnd(1, 3.4), l: Math.random() > 0.5 });
+    }
     this.reset();
     this.pattern = this.buildPattern();
     this.bind();
@@ -112,46 +165,54 @@ export class AsykEngine {
 
   // ---------- setup ----------
 
+  private spawnAsyks() {
+    this.asyks = this.opts.level.asyks.map((l) => {
+      const p = polar(l.a, l.d);
+      const faces: Face[] = ["buk", "shik", "taike", "buk", "shik"];
+      return {
+        x: p.x,
+        y: p.y,
+        hx: p.x,
+        hy: p.y,
+        ph: rnd(0, Math.PI * 2),
+        vx: 0,
+        vy: 0,
+        r: 20,
+        kind: l.kind,
+        face: faces[Math.floor(Math.random() * faces.length)] ?? "buk",
+        angle: rnd(-0.6, 0.6),
+        spin: 0,
+        out: false,
+        gone: false,
+        hit: false,
+        cool: 0,
+      };
+    });
+  }
+
   private reset() {
-    const layout: { a: number; d: number; kind: AsykKind }[] = [
-      { a: -Math.PI / 2, d: 148, kind: "gold" },
-      { a: -Math.PI / 2 + 1.25, d: 160, kind: "plain" },
-      { a: -Math.PI / 2 - 1.25, d: 160, kind: "plain" },
-      { a: Math.PI / 2 - 0.5, d: 132, kind: "plain" },
-      { a: Math.PI / 2 + 0.5, d: 132, kind: "plain" },
-    ];
-    this.asyks = layout.map((l) => ({
-      x: CX + Math.cos(l.a) * l.d,
-      y: CY + Math.sin(l.a) * l.d * 0.85,
-      vx: 0,
-      vy: 0,
-      r: 20,
-      kind: l.kind,
-      angle: rnd(-0.6, 0.6),
-      spin: 0,
-      out: false,
-      gone: false,
-    }));
+    const lv = this.opts.level;
+    this.spawnAsyks();
+    this.stones = (lv.stones ?? []).map((s) => ({ ...polar(s.a, s.d), r: s.r, seed: Math.random() * 10 }));
     this.score = 0;
-    this.throwsLeft = 5;
+    this.coins = 0;
+    this.throwsLeft = lv.throws;
+    this.timeLeft = lv.time ?? null;
     this.finished = false;
+    if (this.opts.mode === "pvp") {
+      const half = Math.ceil(lv.throws / 2);
+      this.pvp = { turn: 0, knocked: [0, 0], points: [0, 0], left: [half, half] };
+      queueMicrotask(() => this.cb.onPvp({ ...this.pvp }));
+    }
+    queueMicrotask(() => this.cb.onTime(this.timeLeft === null ? null : Math.ceil(this.timeLeft)));
     this.resetSaka();
   }
 
   private resetSaka() {
-    this.saka = {
-      x: START_X,
-      y: START_Y,
-      z: 0,
-      vx: 0,
-      vy: 0,
-      vz: 0,
-      r: 26,
-      active: false,
-      grounded: false,
-      angle: 0,
-    };
+    this.saka = { x: START_X, y: START_Y, z: 0, vx: 0, vy: 0, vz: 0, r: 26, active: false, grounded: false, angle: 0 };
     this.aiming = false;
+    this.pending = 0;
+    this.trail = [];
   }
 
   private buildPattern(): CanvasPattern | null {
@@ -162,7 +223,6 @@ export class AsykEngine {
     if (!p) return null;
     p.fillStyle = "#0d4a4e";
     p.fillRect(0, 0, 120, 120);
-    // qoshqar muyiz (ram horn) style ornament
     p.strokeStyle = "rgba(226, 183, 90, 0.22)";
     p.lineWidth = 3;
     p.lineCap = "round";
@@ -205,14 +265,6 @@ export class AsykEngine {
     this.sfx.stopWhistle();
   }
 
-  restart() {
-    this.particles = [];
-    this.texts = [];
-    this.reset();
-    this.cb.onScore(0);
-    this.cb.onThrows(this.throwsLeft);
-  }
-
   resize = () => {
     const rect = this.canvas.getBoundingClientRect();
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -250,7 +302,6 @@ export class AsykEngine {
     this.launch(aim);
   };
 
-  /** Direction + power derived from how far the pointer is pulled back. */
   private aimVector() {
     const dx = this.saka.x - this.aimPoint.x;
     const dy = this.saka.y - this.aimPoint.y;
@@ -260,36 +311,54 @@ export class AsykEngine {
     return { dx: dx / len, dy: dy / len, power };
   }
 
+  private launchVel(aim: { dx: number; dy: number; power: number }) {
+    const speed = aim.power * SPEED_MAX * this.skin.speed;
+    const vz = aim.power * VZ_MAX * (this.skin.impulse > 1.3 ? 0.92 : 1);
+    return { vx: aim.dx * speed, vy: aim.dy * speed, vz };
+  }
+
   private launch(aim: { dx: number; dy: number; power: number }) {
-    const st = SAKA_STATS[this.kind];
-    const speed = aim.power * SPEED_MAX * st.speed;
-    this.saka.vx = aim.dx * speed;
-    this.saka.vy = aim.dy * speed;
-    this.saka.vz = aim.power * VZ_MAX * (this.kind === "lead" ? 0.92 : 1);
+    const v = this.launchVel(aim);
+    // slight human wobble: a couple of degrees and a few % of power
+    const j = rnd(-0.035, 0.035);
+    const k = rnd(0.97, 1.03);
+    const c = Math.cos(j);
+    const s = Math.sin(j);
+    this.saka.vx = (v.vx * c - v.vy * s) * k;
+    this.saka.vy = (v.vx * s + v.vy * c) * k;
+    this.saka.vz = v.vz;
     this.saka.z = 6;
     this.saka.active = true;
     this.saka.grounded = false;
     this.settleTimer = 0;
+    this.pending = 0;
     this.throwsLeft -= 1;
     this.cb.onThrows(this.throwsLeft);
+    if (this.opts.mode === "pvp") {
+      this.pvp.left[this.pvp.turn] -= 1;
+      this.cb.onPvp({ ...this.pvp, knocked: [...this.pvp.knocked], points: [...this.pvp.points], left: [...this.pvp.left] });
+    }
     this.sfx.startWhistle();
   }
 
   // ---------- simulation ----------
 
+  private wind() {
+    return this.opts.level.wind ?? 0;
+  }
+
   private predict(aim: { dx: number; dy: number; power: number }) {
-    const st = SAKA_STATS[this.kind];
-    const speed = aim.power * SPEED_MAX * st.speed;
-    const vz = aim.power * VZ_MAX * (this.kind === "lead" ? 0.92 : 1);
-    const t = (2 * vz) / G;
+    const v = this.launchVel(aim);
+    const t = (2 * v.vz) / G;
+    const w = this.wind();
     const pts: { x: number; y: number; z: number }[] = [];
     const steps = 26;
     for (let i = 0; i <= steps; i++) {
       const tt = (t * i) / steps;
       pts.push({
-        x: this.saka.x + aim.dx * speed * tt,
-        y: this.saka.y + aim.dy * speed * tt,
-        z: Math.max(0, 6 + vz * tt - 0.5 * G * tt * tt),
+        x: this.saka.x + v.vx * tt + 0.5 * w * tt * tt,
+        y: this.saka.y + v.vy * tt,
+        z: Math.max(0, 6 + v.vz * tt - 0.5 * G * tt * tt),
       });
     }
     return { pts, land: pts[pts.length - 1] };
@@ -314,48 +383,88 @@ export class AsykEngine {
     }
   }
 
-  private addText(x: number, y: number, text: string, color = "#ffe9a8") {
-    this.texts.push({ x, y, text, life: 0, color });
+  private addText(x: number, y: number, text: string, color = "#ffe9a8", size = 34) {
+    this.texts.push({ x, y, text, life: 0, color, size });
   }
 
-  private update(dt: number) {
+  private collideStone(o: { x: number; y: number; vx: number; vy: number }, r: number) {
+    for (const st of this.stones) {
+      const dx = o.x - st.x;
+      const dy = o.y - st.y;
+      const d = Math.hypot(dx, dy);
+      if (d < r + st.r && d > 0.001) {
+        const nx = dx / d;
+        const ny = dy / d;
+        o.x = st.x + nx * (r + st.r);
+        o.y = st.y + ny * (r + st.r);
+        const vn = o.vx * nx + o.vy * ny;
+        if (vn < 0) {
+          o.vx -= 1.55 * vn * nx;
+          o.vy -= 1.55 * vn * ny;
+          if (-vn > 80) this.sfx.knock(Math.min(0.8, -vn / 900));
+        }
+      }
+    }
+  }
+
+  private update(dt: number, rawDt: number) {
     const s = this.saka;
 
-    // slow-motion trigger: fast saka about to reach an asyk
+    if (this.timeLeft !== null) {
+      this.timeLeft = Math.max(0, this.timeLeft - rawDt);
+      const sec = Math.ceil(this.timeLeft);
+      if (sec !== this.lastSec) {
+        this.lastSec = sec;
+        this.cb.onTime(sec);
+      }
+      if (this.timeLeft <= 0 && !s.active) {
+        this.finish(this.asyks.every((a) => a.out));
+        return;
+      }
+    }
+
     if (s.active && this.slowmo <= 0) {
       const sp = Math.hypot(s.vx, s.vy);
-      if (sp > 500 && s.z < 90) {
+      if (sp > 650 && s.z < 60) {
         for (const a of this.asyks) {
           if (a.gone) continue;
-          const nx = s.x + s.vx * 0.18;
-          const ny = s.y + s.vy * 0.18;
-          if (Math.hypot(nx - a.x, ny - a.y) < a.r + s.r + 14) {
-            this.slowmo = 0.45;
+          if (Math.hypot(s.x + s.vx * 0.15 - a.x, s.y + s.vy * 0.15 - a.y) < a.r + s.r + 10) {
+            this.slowmo = 0.35;
             break;
           }
         }
       }
     }
-    if (this.slowmo > 0) this.slowmo = Math.max(0, this.slowmo - dt);
+    if (this.slowmo > 0) this.slowmo = Math.max(0, this.slowmo - rawDt);
 
     if (s.active) {
       s.x += s.vx * dt;
       s.y += s.vy * dt;
       s.z += s.vz * dt;
       s.vz -= G * dt;
+      if (s.z > 4) s.vx += this.wind() * dt;
       s.angle += (Math.hypot(s.vx, s.vy) / 160) * dt * 6;
+
+      if (this.skin.trail && s.z > 2) {
+        this.trail.push({ x: s.x, y: s.y - s.z * 0.55 });
+        if (this.trail.length > 22) this.trail.shift();
+      } else if (this.trail.length) this.trail.shift();
 
       if (s.z <= 0) {
         s.z = 0;
         if (s.vz < -150) {
-          // bounce, losing most of the energy
-          s.vz = -s.vz * 0.36;
-          s.vx *= 0.68;
-          s.vy *= 0.68;
+          s.vz = -s.vz * 0.34;
+          // bounce with a tiny random kick
+          const j = rnd(-0.07, 0.07);
+          const c = Math.cos(j) * 0.66;
+          const sn = Math.sin(j) * 0.66;
+          const vx = s.vx;
+          s.vx = vx * c - s.vy * sn;
+          s.vy = vx * sn + s.vy * c;
           const p = Math.min(1, Math.abs(s.vz) / 400);
           this.sfx.thud(p);
           this.burst(s.x, s.y, 10, "#c9b189", 0.7 + p);
-          this.shake = Math.max(this.shake, 4 * p);
+          if (p > 0.5) this.shake = Math.max(this.shake, 2 * p);
         } else {
           s.vz = 0;
           if (!s.grounded) {
@@ -368,98 +477,92 @@ export class AsykEngine {
       }
 
       if (s.grounded) {
-        const damp = Math.exp(-2.6 * dt);
+        const damp = Math.exp(-3.2 * dt);
         s.vx *= damp;
         s.vy *= damp;
       }
 
-      const airborne = s.z > 4;
-      this.sfx.updateWhistle(airborne ? Math.min(1, Math.hypot(s.vx, s.vy) / 900) : 0);
+      this.sfx.updateWhistle(s.z > 4 ? Math.min(1, Math.hypot(s.vx, s.vy) / 900) : 0);
+
+      if (s.z < 30) this.collideStone(s, s.r);
 
       // collisions only near the ground — in the air the saka flies OVER the asyks
-      if (s.z < 22) {
-        const st = SAKA_STATS[this.kind];
+      if (s.z < 20) {
         for (const a of this.asyks) {
-          if (a.gone) continue;
+          if (a.gone || a.cool > 0) continue;
           const dx = a.x - s.x;
           const dy = a.y - s.y;
           const d = Math.hypot(dx, dy);
-          if (d < a.r + s.r && d > 0.001) {
-            const nx = dx / d;
-            const ny = dy / d;
-            const sp = Math.hypot(s.vx, s.vy);
-            const power = Math.min(1, sp / 900);
-            a.vx += nx * sp * 0.85 * st.impulse + s.vx * 0.12;
-            a.vy += ny * sp * 0.85 * st.impulse + s.vy * 0.12;
-            a.spin = rnd(-12, 12);
-            s.vx = s.vx * 0.32 - nx * sp * 0.12;
-            s.vy = s.vy * 0.32 - ny * sp * 0.12;
-            s.x = a.x - nx * (a.r + s.r);
-            s.y = a.y - ny * (a.r + s.r);
-            this.shake = Math.max(this.shake, 6 + 10 * power);
-            this.sfx.knock(0.4 + power);
-            this.burst(a.x, a.y, 12, "#d8c49a", 0.8 + power);
-          }
+          if (d >= a.r + s.r || d < 0.001) continue;
+          const nx = dx / d;
+          const ny = dy / d;
+          // separate without pulling (no magnet effect)
+          const overlap = a.r + s.r - d;
+          s.x -= nx * overlap * 0.5;
+          s.y -= ny * overlap * 0.5;
+          a.x += nx * overlap * 0.5;
+          a.y += ny * overlap * 0.5;
+          const closing = (s.vx - a.vx) * nx + (s.vy - a.vy) * ny;
+          if (closing <= 25) continue;
+          // impulse proportional to the real closing speed, with a light random deflection
+          const j = rnd(-0.09, 0.09);
+          const mx = nx * Math.cos(j) - ny * Math.sin(j);
+          const my = nx * Math.sin(j) + ny * Math.cos(j);
+          const imp = closing * 0.95 * this.skin.impulse * rnd(0.92, 1.05);
+          a.vx += mx * imp;
+          a.vy += my * imp;
+          a.spin = rnd(-10, 10) * Math.min(1, closing / 600);
+          a.hit = true;
+          a.cool = 0.15;
+          // saka hands over most of its normal speed and keeps some tangential motion
+          s.vx -= nx * closing * 0.8;
+          s.vy -= ny * closing * 0.8;
+          s.vx *= 0.8;
+          s.vy *= 0.8;
+          const power = Math.min(1, closing / 1000);
+          if (power > 0.55) this.shake = Math.max(this.shake, 2 + 4 * power);
+          this.sfx.knock(0.25 + power);
+          this.burst(a.x, a.y, Math.round(4 + 10 * power), "#d8c49a", 0.5 + power);
         }
       }
 
-      // throw ends once everything has come to rest
       const allSlow =
-        s.grounded &&
-        Math.hypot(s.vx, s.vy) < 18 &&
-        this.asyks.every((a) => a.gone || Math.hypot(a.vx, a.vy) < 18);
+        s.grounded && Math.hypot(s.vx, s.vy) < 18 && this.asyks.every((a) => a.gone || Math.hypot(a.vx, a.vy) < 18);
       if (allSlow) {
         this.settleTimer += dt;
-        if (this.settleTimer > 0.5) this.endThrow();
-      } else {
-        this.settleTimer = 0;
-      }
+        if (this.settleTimer > 0.45) this.endThrow();
+      } else this.settleTimer = 0;
       if ((s.x < -120 || s.x > W + 120 || s.y < -160 || s.y > H + 160) && s.grounded) this.endThrow();
     }
 
-    // asyks
     for (const a of this.asyks) {
       if (a.gone) continue;
+      if (a.cool > 0) a.cool -= dt;
+      if (this.opts.level.moving && !a.hit) {
+        a.ph += dt * 0.9;
+        a.x = a.hx + Math.cos(a.ph) * 28;
+        a.y = a.hy + Math.sin(a.ph * 1.3) * 12;
+        continue;
+      }
       a.x += a.vx * dt;
       a.y += a.vy * dt;
-      const damp = Math.exp(-1.9 * dt);
+      const damp = Math.exp(-2.7 * dt);
       a.vx *= damp;
       a.vy *= damp;
       a.angle += a.spin * dt;
-      a.spin *= Math.exp(-2.4 * dt);
+      a.spin *= Math.exp(-2.6 * dt);
       if (Math.hypot(a.vx, a.vy) < 6) {
         a.vx = 0;
         a.vy = 0;
       }
+      if (!a.out) this.collideStone(a, a.r);
 
       if (!a.out) {
         const d = Math.hypot(a.x - CX, (a.y - CY) / 0.85);
-        if (d > R + a.r) {
-          a.out = true;
-          const gold = a.kind === "gold";
-          this.score += gold ? 300 : 100;
-          this.cb.onScore(this.score);
-          if (gold) {
-            this.throwsLeft += 1;
-            this.cb.onThrows(this.throwsLeft);
-          }
-          this.sfx.chime(gold);
-          this.burst(a.x, a.y, gold ? 34 : 20, gold ? "#ffd766" : "#f0dca8", 1.2, true);
-          this.addText(
-            a.x,
-            a.y - 30,
-            PRAISE[Math.floor(Math.random() * PRAISE.length)] ?? PRAISE[0]!,
-            gold ? "#ffd766" : "#ffe9a8",
-          );
-          if (gold) this.addText(a.x, a.y - 74, "+300", "#ffd766");
-          else this.addText(a.x, a.y - 74, "+100", "#bff0e4");
-        }
-      } else if (Math.hypot(a.vx, a.vy) < 10) {
-        a.gone = true;
-      }
+        if (d > R + a.r) this.knockOut(a);
+      } else if (Math.hypot(a.vx, a.vy) < 10) a.gone = true;
     }
 
-    // asyk vs asyk
     for (let i = 0; i < this.asyks.length; i++) {
       for (let j = i + 1; j < this.asyks.length; j++) {
         const a = this.asyks[i];
@@ -479,18 +582,19 @@ export class AsykEngine {
           b.y += ny * push;
           const rel = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
           if (rel < 0) {
-            const imp = -rel * 0.75;
+            const imp = -rel * 0.8;
             a.vx -= nx * imp;
             a.vy -= ny * imp;
             b.vx += nx * imp;
             b.vy += ny * imp;
-            this.sfx.knock(0.35);
+            a.hit = true;
+            b.hit = true;
+            if (-rel > 60) this.sfx.knock(0.3);
           }
         }
       }
     }
 
-    // particles & texts
     for (const p of this.particles) {
       p.life += dt;
       p.x += p.vx * dt;
@@ -506,21 +610,93 @@ export class AsykEngine {
     }
     this.particles = this.particles.filter((p) => p.life < p.max);
     for (const t of this.texts) t.life += dt;
-    this.texts = this.texts.filter((t) => t.life < 1.4);
+    this.texts = this.texts.filter((t) => t.life < 1.5);
 
-    this.shake = Math.max(0, this.shake - dt * 30);
+    this.shake = Math.max(0, this.shake - rawDt * 28);
+  }
+
+  private knockOut(a: Asyk) {
+    a.out = true;
+    const gold = a.kind === "gold";
+    a.face = rollFace(0.08);
+    const mult = FACE_MULT[a.face];
+    const base = gold ? 300 : 100;
+    const pts = base * mult;
+    this.coins += (gold ? 30 : 10) * mult;
+    if (this.opts.mode === "alshy") {
+      this.pending += base;
+    } else if (this.opts.mode === "pvp") {
+      const t = this.pvp.turn;
+      this.pvp.knocked[t] += 1;
+      this.pvp.points[t] += pts;
+      this.cb.onPvp({ ...this.pvp, knocked: [...this.pvp.knocked], points: [...this.pvp.points], left: [...this.pvp.left] });
+    } else {
+      this.score += pts;
+      this.cb.onScore(this.score);
+    }
+    if (gold && this.opts.mode !== "pvp") {
+      this.throwsLeft += 1;
+      this.cb.onThrows(this.throwsLeft);
+    }
+    this.sfx.chime(gold || mult > 1);
+    this.burst(a.x, a.y, gold ? 34 : 20, gold ? "#ffd766" : "#f0dca8", 1.2, true);
+    this.addText(a.x, a.y - 30, PRAISE[Math.floor(Math.random() * PRAISE.length)] ?? "Керемет!", gold ? "#ffd766" : "#ffe9a8");
+    const faceLabel = mult > 1 ? `${FACE_NAME[a.face]} ×${mult}` : FACE_NAME[a.face];
+    this.addText(a.x, a.y - 72, this.opts.mode === "alshy" ? faceLabel : `${faceLabel}  +${pts}`, mult > 1 ? "#ffd766" : "#bff0e4", 24);
   }
 
   private endThrow() {
     this.sfx.stopWhistle();
+    const s = this.saka;
+    const mode = this.opts.mode;
+
+    if (mode === "alshy") {
+      const face = rollFace(0.3);
+      const inField = Math.hypot(s.x - CX, (s.y - CY) / 0.85) < R + 120;
+      const ok = face === "alshy" && inField;
+      if (this.pending > 0 || ok) {
+        const gain = ok ? this.pending * 2 + 50 : 0;
+        this.score += gain;
+        this.cb.onScore(this.score);
+        this.addText(s.x, s.y - 50, ok ? `Алшы! +${gain}` : `${FACE_NAME[face]} — 0`, ok ? "#ffd766" : "#f4a3a3", 30);
+        if (ok) this.sfx.chime(true);
+      } else {
+        this.addText(s.x, s.y - 50, FACE_NAME[face], "#bff0e4", 26);
+      }
+    }
+
+    if (mode === "pvp") {
+      if (this.asyks.every((a) => a.out)) this.spawnAsyks();
+      const done = this.pvp.left[0] <= 0 && this.pvp.left[1] <= 0;
+      if (done) {
+        const [k0, k1] = this.pvp.knocked;
+        const [p0, p1] = this.pvp.points;
+        this.finish(k0 !== k1 ? k0 > k1 : p0 >= p1);
+        return;
+      }
+      const next: 0 | 1 = this.pvp.turn === 0 ? 1 : 0;
+      this.pvp.turn = this.pvp.left[next] > 0 ? next : this.pvp.turn;
+      this.cb.onPvp({ ...this.pvp, knocked: [...this.pvp.knocked], points: [...this.pvp.points], left: [...this.pvp.left] });
+      this.resetSaka();
+      return;
+    }
+
     const win = this.asyks.every((a) => a.out);
-    if (win || this.throwsLeft <= 0) {
-      this.finished = true;
-      this.saka.active = false;
-      this.cb.onEnd(win, this.score);
+    const timeUp = this.timeLeft !== null && this.timeLeft <= 0;
+    if (win || this.throwsLeft <= 0 || timeUp) {
+      this.finish(win);
       return;
     }
     this.resetSaka();
+  }
+
+  private finish(win: boolean) {
+    this.finished = true;
+    this.saka.active = false;
+    this.sfx.stopWhistle();
+    const pvp = this.opts.mode === "pvp" ? { ...this.pvp } : undefined;
+    const res: EndResult = { win, score: this.score, coins: this.coins, throwsLeft: this.throwsLeft, pvp };
+    setTimeout(() => this.cb.onEnd(res), 500);
   }
 
   // ---------- rendering ----------
@@ -528,24 +704,19 @@ export class AsykEngine {
   private loop = (now: number) => {
     const raw = Math.min((now - this.last) / 1000, 0.05);
     this.last = now;
-    const dt = raw * (this.slowmo > 0 ? 0.35 : 1);
-    if (!this.finished) this.update(dt);
+    const dt = raw * (this.slowmo > 0 ? 0.4 : 1);
+    if (!this.finished) this.update(dt, raw);
     this.draw();
     this.raf = requestAnimationFrame(this.loop);
   };
 
   private draw() {
     const ctx = this.ctx;
-    const rect = this.canvas.getBoundingClientRect();
     ctx.save();
     ctx.scale(this.scale, this.scale);
     ctx.clearRect(0, 0, W, H);
+    if (this.shake > 0.2) ctx.translate(rnd(-this.shake, this.shake), rnd(-this.shake, this.shake));
 
-    if (this.shake > 0.2) {
-      ctx.translate(rnd(-this.shake, this.shake), rnd(-this.shake, this.shake));
-    }
-
-    // background
     ctx.fillStyle = "#0d4a4e";
     ctx.fillRect(-40, -40, W + 80, H + 80);
     if (this.pattern) {
@@ -562,31 +733,28 @@ export class AsykEngine {
     ctx.fillRect(-40, -40, W + 80, H + 80);
 
     this.drawField(ctx);
+    for (const st of this.stones) this.drawStone(ctx, st);
 
-    // shadows first
     for (const a of this.asyks) if (!a.gone) this.drawShadow(ctx, a.x, a.y, 0, a.r);
     if (!this.finished) this.drawShadow(ctx, this.saka.x, this.saka.y, this.saka.z, this.saka.r);
 
     this.drawParticles(ctx, false);
-
-    // sort by y for depth
-    const sorted = [...this.asyks].filter((a) => !a.gone).sort((a, b) => a.y - b.y);
+    const sorted = this.asyks.filter((a) => !a.gone).sort((a, b) => a.y - b.y);
     for (const a of sorted) this.drawAsyk(ctx, a);
 
+    this.drawTrail(ctx);
     if (!this.finished) this.drawSaka(ctx);
     this.drawParticles(ctx, true);
     this.drawAim(ctx);
+    this.drawWind(ctx);
     this.drawTexts(ctx);
-
     ctx.restore();
-    void rect;
   }
 
   private drawField(ctx: CanvasRenderingContext2D) {
     ctx.save();
     ctx.translate(CX, CY);
     ctx.scale(1, 0.85);
-
     const g = ctx.createRadialGradient(0, -40, 40, 0, 0, R + 30);
     g.addColorStop(0, "#c4a878");
     g.addColorStop(0.75, "#a8895c");
@@ -595,21 +763,12 @@ export class AsykEngine {
     ctx.arc(0, 0, R, 0, Math.PI * 2);
     ctx.fillStyle = g;
     ctx.fill();
-
-    // speckled ground
-    ctx.save();
-    ctx.clip();
-    for (let i = 0; i < 160; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const d = Math.sqrt(Math.random()) * R;
-      ctx.fillStyle = Math.random() > 0.5 ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.06)";
+    for (const d of this.groundDots) {
+      ctx.fillStyle = d.l ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.06)";
       ctx.beginPath();
-      ctx.arc(Math.cos(a) * d, Math.sin(a) * d, rnd(1, 3.4), 0, Math.PI * 2);
+      ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.restore();
-
-    // golden ornamented rim
     ctx.lineWidth = 7;
     ctx.strokeStyle = "#e2b75a";
     ctx.beginPath();
@@ -620,19 +779,42 @@ export class AsykEngine {
     ctx.beginPath();
     ctx.arc(0, 0, R + 12, 0, Math.PI * 2);
     ctx.stroke();
-
     ctx.strokeStyle = "rgba(255, 233, 168, 0.55)";
     ctx.lineWidth = 2.5;
-    const n = 28;
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2;
+    for (let i = 0; i < 28; i++) {
       ctx.save();
-      ctx.rotate(a);
+      ctx.rotate((i / 28) * Math.PI * 2);
       ctx.beginPath();
       ctx.arc(0, -(R + 24), 9, Math.PI * 0.15, Math.PI * 1.1);
       ctx.stroke();
       ctx.restore();
     }
+    ctx.restore();
+  }
+
+  private drawStone(ctx: CanvasRenderingContext2D, st: Stone) {
+    this.drawShadow(ctx, st.x, st.y, 0, st.r * 1.05);
+    ctx.save();
+    ctx.translate(st.x, st.y - 4);
+    ctx.beginPath();
+    const n = 9;
+    for (let i = 0; i <= n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const rr = st.r * (0.85 + 0.15 * Math.sin(a * 3 + st.seed));
+      const x = Math.cos(a) * rr;
+      const y = Math.sin(a) * rr * 0.8;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    const g = ctx.createLinearGradient(0, -st.r, 0, st.r);
+    g.addColorStop(0, "#9aa0a4");
+    g.addColorStop(1, "#4f5559");
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = "#2f3336";
+    ctx.lineWidth = 2;
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -642,29 +824,85 @@ export class AsykEngine {
     ctx.globalAlpha = 0.34 * k;
     ctx.fillStyle = "#1c1208";
     ctx.beginPath();
-    ctx.ellipse(x, y + 4, r * 0.95 * k, r * 0.5 * k, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, y + 4, r * 1.1 * k, r * 0.5 * k, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
 
-  private boneShape(ctx: CanvasRenderingContext2D, r: number, fill: string, edge: string, top: string) {
+  /** Top view of an ankle bone: two lobes with a waist, detail depends on the face. */
+  private drawBone(ctx: CanvasRenderingContext2D, r: number, face: Face, fill: string, light: string, edge: string) {
+    const w = r * 1.12;
+    const h = r * 0.74;
     ctx.beginPath();
-    ctx.ellipse(0, 0, r, r * 0.74, 0, 0, Math.PI * 2);
-    ctx.fillStyle = fill;
+    ctx.moveTo(-w, -h * 0.55);
+    ctx.bezierCurveTo(-w, -h * 1.12, -w * 0.3, -h * 1.1, 0, -h * 0.6);
+    ctx.bezierCurveTo(w * 0.3, -h * 1.1, w, -h * 1.12, w, -h * 0.55);
+    ctx.bezierCurveTo(w * 1.12, -h * 0.1, w * 1.12, h * 0.1, w, h * 0.55);
+    ctx.bezierCurveTo(w, h * 1.12, w * 0.3, h * 1.05, 0, h * 0.72);
+    ctx.bezierCurveTo(-w * 0.3, h * 1.05, -w, h * 1.12, -w, h * 0.55);
+    ctx.bezierCurveTo(-w * 1.12, h * 0.1, -w * 1.12, -h * 0.1, -w, -h * 0.55);
+    ctx.closePath();
+    const g = ctx.createLinearGradient(-w * 0.4, -h, w * 0.4, h);
+    g.addColorStop(0, light);
+    g.addColorStop(0.55, fill);
+    g.addColorStop(1, edge);
+    ctx.fillStyle = g;
     ctx.fill();
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1.8;
     ctx.strokeStyle = edge;
     ctx.stroke();
-    // knuckle lobes
-    ctx.beginPath();
-    ctx.ellipse(-r * 0.42, -r * 0.16, r * 0.42, r * 0.44, -0.3, 0, Math.PI * 2);
-    ctx.ellipse(r * 0.42, -r * 0.16, r * 0.42, r * 0.44, 0.3, 0, Math.PI * 2);
-    ctx.fillStyle = top;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.ellipse(0, r * 0.26, r * 0.5, r * 0.28, 0, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(0,0,0,0.12)";
-    ctx.fill();
+
+    ctx.save();
+    ctx.lineCap = "round";
+    if (face === "alshy") {
+      // S-shaped ridge across the bone
+      ctx.strokeStyle = "rgba(60,40,20,0.55)";
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(-w * 0.7, h * 0.1);
+      ctx.bezierCurveTo(-w * 0.3, -h * 0.6, w * 0.3, h * 0.6, w * 0.7, -h * 0.1);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(60,40,20,0.35)";
+      ctx.beginPath();
+      ctx.arc(-w * 0.5, -h * 0.35, r * 0.1, 0, Math.PI * 2);
+      ctx.arc(w * 0.5, h * 0.35, r * 0.1, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (face === "taike") {
+      // deep central hollow
+      ctx.fillStyle = "rgba(50,32,14,0.45)";
+      ctx.beginPath();
+      ctx.ellipse(0, h * 0.05, w * 0.36, h * 0.36, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.ellipse(0, h * 0.05, w * 0.4, h * 0.42, 0, Math.PI * 1.1, Math.PI * 1.9);
+      ctx.stroke();
+    } else if (face === "buk") {
+      // rounded hump with a highlight
+      ctx.fillStyle = "rgba(255,255,255,0.35)";
+      ctx.beginPath();
+      ctx.ellipse(-w * 0.2, -h * 0.25, w * 0.35, h * 0.2, -0.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(60,40,20,0.3)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(-w * 0.55, h * 0.35);
+      ctx.quadraticCurveTo(0, h * 0.55, w * 0.55, h * 0.35);
+      ctx.stroke();
+    } else {
+      // shik: flat side with a notch
+      ctx.strokeStyle = "rgba(60,40,20,0.45)";
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(-w * 0.15, -h * 0.55);
+      ctx.lineTo(0, -h * 0.15);
+      ctx.lineTo(w * 0.15, -h * 0.55);
+      ctx.moveTo(-w * 0.6, h * 0.2);
+      ctx.lineTo(w * 0.6, h * 0.2);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   private drawAsyk(ctx: CanvasRenderingContext2D, a: Asyk) {
@@ -672,47 +910,61 @@ export class AsykEngine {
     ctx.translate(a.x, a.y);
     ctx.rotate(a.angle);
     if (a.kind === "gold") {
-      this.boneShape(ctx, a.r, "#e8b73f", "#8a6410", "#ffd978");
-      ctx.globalAlpha = 0.5;
-      ctx.beginPath();
-      ctx.ellipse(-a.r * 0.3, -a.r * 0.3, a.r * 0.24, a.r * 0.16, -0.5, 0, Math.PI * 2);
-      ctx.fillStyle = "#fff6d2";
-      ctx.fill();
+      ctx.shadowColor = "rgba(255,215,102,0.7)";
+      ctx.shadowBlur = 12;
+      this.drawBone(ctx, a.r, a.face, "#e8b73f", "#fff0b0", "#8a6410");
     } else {
-      this.boneShape(ctx, a.r, "#e3d3ae", "#9a8560", "#f3e8cc");
+      this.drawBone(ctx, a.r, a.face, "#e3d3ae", "#fbf3dc", "#9a8560");
+    }
+    ctx.restore();
+  }
+
+  private drawTrail(ctx: CanvasRenderingContext2D) {
+    if (!this.skin.trail || this.trail.length < 2) return;
+    ctx.save();
+    ctx.lineCap = "round";
+    for (let i = 1; i < this.trail.length; i++) {
+      const p0 = this.trail[i - 1]!;
+      const p1 = this.trail[i]!;
+      const k = i / this.trail.length;
+      ctx.globalAlpha = k * 0.7;
+      ctx.strokeStyle = this.skin.trail;
+      ctx.shadowColor = this.skin.glow ?? this.skin.trail;
+      ctx.shadowBlur = 16;
+      ctx.lineWidth = 4 + k * 14;
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y);
+      ctx.lineTo(p1.x, p1.y);
+      ctx.stroke();
     }
     ctx.restore();
   }
 
   private drawSaka(ctx: CanvasRenderingContext2D) {
     const s = this.saka;
-    const lift = s.z * 0.55;
-    const sc = 1 + s.z / 620;
+    const sk = this.skin;
     ctx.save();
-    ctx.translate(s.x, s.y - lift);
+    ctx.translate(s.x, s.y - s.z * 0.55);
+    const sc = 1 + s.z / 620;
     ctx.scale(sc, sc);
     ctx.rotate(s.angle);
-    if (this.kind === "lead") {
-      this.boneShape(ctx, s.r, "#8f97a3", "#454b55", "#b9c1cb");
-      ctx.beginPath();
-      ctx.ellipse(0, 0, s.r * 0.34, s.r * 0.22, 0, 0, Math.PI * 2);
-      ctx.fillStyle = "#5a626d";
-      ctx.fill();
-    } else {
-      this.boneShape(ctx, s.r, "#e8d5a8", "#8a7345", "#f8efd6");
+    if (sk.glow) {
+      ctx.shadowColor = sk.glow;
+      ctx.shadowBlur = 22;
     }
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "#e2b75a";
+    this.drawBone(ctx, s.r, "alshy", sk.fill, sk.light, sk.edge);
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = sk.glow ?? "#e2b75a";
     ctx.beginPath();
-    ctx.ellipse(0, 0, s.r * 0.62, s.r * 0.45, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, s.r * 0.5, s.r * 0.32, 0, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
 
   private drawParticles(ctx: CanvasRenderingContext2D, above: boolean) {
     for (const p of this.particles) {
-      const isGold = p.z > 6;
-      if (isGold !== above) continue;
+      if (p.z > 6 !== above) continue;
       const k = 1 - p.life / p.max;
       ctx.save();
       ctx.globalAlpha = Math.max(0, k);
@@ -724,14 +976,42 @@ export class AsykEngine {
     }
   }
 
+  private drawWind(ctx: CanvasRenderingContext2D) {
+    const w = this.wind();
+    if (!w) return;
+    ctx.save();
+    ctx.translate(CX, 118);
+    const len = 30 + Math.min(90, Math.abs(w) / 2.6);
+    const dir = Math.sign(w);
+    const off = ((performance.now() / 12) % 20) * dir;
+    ctx.globalAlpha = 0.9;
+    ctx.strokeStyle = "#bff0e4";
+    ctx.fillStyle = "#bff0e4";
+    ctx.lineWidth = 5;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo((-len / 2) * dir + off * 0.3, 0);
+    ctx.lineTo((len / 2) * dir + off * 0.3, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo((len / 2 + 14) * dir + off * 0.3, 0);
+    ctx.lineTo((len / 2) * dir + off * 0.3, -10);
+    ctx.lineTo((len / 2) * dir + off * 0.3, 10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.font = "600 18px Georgia, serif";
+    ctx.textAlign = "center";
+    ctx.fillText(`Жел ${Math.round(Math.abs(w) / 20)}`, 0, 30);
+    ctx.restore();
+  }
+
   private drawAim(ctx: CanvasRenderingContext2D) {
     if (this.finished) return;
     const s = this.saka;
     if (!s.active && !this.aiming) {
-      // idle hint ring
       ctx.save();
       ctx.globalAlpha = 0.45 + 0.2 * Math.sin(performance.now() / 300);
-      ctx.strokeStyle = "#7fe3d0";
+      ctx.strokeStyle = this.opts.mode === "pvp" && this.pvp.turn === 1 ? "#ff9f7a" : "#7fe3d0";
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 8]);
       ctx.beginPath();
@@ -745,9 +1025,7 @@ export class AsykEngine {
     if (!aim) return;
     const { pts, land } = this.predict(aim);
     if (!land) return;
-
     ctx.save();
-    // pull-back line
     ctx.strokeStyle = "rgba(255,233,168,0.5)";
     ctx.lineWidth = 3;
     ctx.setLineDash([8, 8]);
@@ -755,8 +1033,6 @@ export class AsykEngine {
     ctx.moveTo(s.x, s.y);
     ctx.lineTo(this.aimPoint.x, this.aimPoint.y);
     ctx.stroke();
-
-    // dotted parabola
     ctx.setLineDash([]);
     pts.forEach((p, i) => {
       if (i % 2) return;
@@ -767,8 +1043,6 @@ export class AsykEngine {
       ctx.arc(p.x, p.y - p.z * 0.55, 4.5 - k * 1.5, 0, Math.PI * 2);
       ctx.fill();
     });
-
-    // landing marker
     ctx.globalAlpha = 0.95;
     ctx.strokeStyle = "#ffd766";
     ctx.lineWidth = 3;
@@ -781,8 +1055,6 @@ export class AsykEngine {
     ctx.moveTo(land.x, land.y - 7);
     ctx.lineTo(land.x, land.y + 7);
     ctx.stroke();
-
-    // power bar
     ctx.globalAlpha = 1;
     const bw = 180;
     const bx = s.x - bw / 2;
@@ -802,12 +1074,13 @@ export class AsykEngine {
 
   private drawTexts(ctx: CanvasRenderingContext2D) {
     for (const t of this.texts) {
-      const k = t.life / 1.4;
+      const k = t.life / 1.5;
+      const pop = 1 + 0.25 * Math.sin(Math.min(1, k * 4) * Math.PI * 0.5);
       ctx.save();
       ctx.globalAlpha = Math.max(0, 1 - k * k);
       ctx.translate(t.x, t.y - k * 70);
-      ctx.scale(1 + 0.25 * Math.sin(Math.min(1, k * 4) * Math.PI * 0.5), 1 + 0.25 * Math.sin(Math.min(1, k * 4) * Math.PI * 0.5));
-      ctx.font = "700 34px Georgia, serif";
+      ctx.scale(pop, pop);
+      ctx.font = `700 ${t.size}px Georgia, serif`;
       ctx.textAlign = "center";
       ctx.lineWidth = 6;
       ctx.strokeStyle = "rgba(10,40,42,0.85)";
