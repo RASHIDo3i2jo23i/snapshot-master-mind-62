@@ -173,7 +173,7 @@ export default function AsykGame() {
 
       <div className="relative mt-3 w-full max-w-[560px]">
         <div
-          className="relative overflow-hidden rounded-lg border-2 border-[#e2b75a]/70 shadow-[0_18px_60px_rgba(0,0,0,0.55)]"
+          className={`relative overflow-hidden rounded-lg border-2 border-[#e2b75a]/70 shadow-[0_18px_60px_rgba(0,0,0,0.55)] ${screen !== "playing" ? "min-h-[calc(100dvh-76px)] sm:min-h-0" : ""}`}
           style={{ aspectRatio: `${W} / ${H}` }}
         >
           {screen === "playing" ? (
@@ -228,7 +228,7 @@ export default function AsykGame() {
                 {t.best}: <span className="font-bold text-[#ffd766]">{bestFree}</span> · {t.skinName[progress.skin]}
               </p>
               <div className="mt-4 grid w-full gap-2">
-                <ModeCard title={t.modeFree} desc={t.modeFreeDesc} onClick={() => start("free")} primary />
+                 <ModeCard title={t.modeFree} desc={t.modeFreeDesc} onClick={() => start("free")} primary />
                 <ModeCard title={t.modeCampaign} desc={t.modeCampaignDesc} onClick={() => go("levels")} />
                 <ModeCard title={t.modePvp} desc={t.modePvpDesc} onClick={() => start("pvp")} />
                 <ModeCard title={t.modeAlshy} desc={t.modeAlshyDesc} onClick={() => start("alshy")} />
@@ -238,9 +238,9 @@ export default function AsykGame() {
                 <SmallBtn onClick={() => go("album")}>{t.album}</SmallBtn>
                 <SmallBtn onClick={() => go("records")}>{t.records}</SmallBtn>
               </div>
-              <button onClick={() => setAboutOpen(true)} className="mt-2 text-xs font-semibold text-[#7fe3d0] underline-offset-2 hover:underline">
+               <Button onClick={() => setAboutOpen(true)} className="mt-2 h-auto bg-transparent p-1 text-xs font-semibold text-[#7fe3d0] underline-offset-2 hover:underline">
                 {t.about}
-              </button>
+               </Button>
             </Overlay>
           )}
 
@@ -373,12 +373,14 @@ export default function AsykGame() {
               <Ornament />
               {mode === "pvp" && result.pvp ? (
                 <>
-                  <h2 className="text-center font-serif text-4xl font-bold text-[#ffd766]">
-                    {t.player} {result.win ? 1 : 2} {t.pvpWinner}
+                   <h2 className="text-center font-serif text-3xl font-bold text-[#ffd766]">
+                     {result.pvp.knocked[0] === result.pvp.knocked[1] && result.pvp.points[0] === result.pvp.points[1]
+                       ? (lang === "kk" ? "Тең ойын!" : lang === "ru" ? "Ничья!" : "Draw!")
+                       : `${t.player} ${result.win ? 1 : 2} ${t.pvpWinner}`}
                   </h2>
                   <div className="mt-4 grid w-full grid-cols-2 gap-2 text-center">
                     {[0, 1].map((i) => (
-                      <div key={i} className="rounded-2xl border border-[#e2b75a]/50 bg-black/25 p-3">
+                      <div key={i} className={`rounded border bg-black/25 p-3 ${result.win === (i === 0) ? "border-[#ffd766]" : "border-[#e2b75a]/30"}`}>
                         <div className="text-xs text-[#7fe3d0]">{t.player} {i + 1}</div>
                         <div className="font-serif text-4xl font-bold">{result.pvp!.knocked[i]}</div>
                         <div className="text-[11px] text-[#f4ecd8]/60">{t.knocked} · {result.pvp!.points[i]}</div>
