@@ -173,8 +173,8 @@ export default function AsykGame() {
 
       <div className="relative mt-3 w-full max-w-[560px]">
         <div
-          className={`relative overflow-hidden rounded-lg border-2 border-[#e2b75a]/70 shadow-[0_18px_60px_rgba(0,0,0,0.55)] ${screen !== "playing" ? "min-h-[calc(100dvh-76px)] sm:min-h-0" : ""}`}
-          style={{ aspectRatio: `${W} / ${H}` }}
+          className="relative overflow-hidden rounded-lg border-2 border-[#e2b75a]/70 shadow-[0_18px_60px_rgba(0,0,0,0.55)]"
+          style={screen === "playing" ? { aspectRatio: `${W} / ${H}` } : { height: "min(760px, calc(100dvh - 76px))", minHeight: 520 }}
         >
           {screen === "playing" ? (
             <canvas key={runId} ref={canvasRef} className="block h-full w-full touch-none select-none" />
