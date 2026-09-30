@@ -74,7 +74,7 @@ export default function AsykGame() {
         p = { ...p, stars: { ...p.stars, [n]: Math.max(p.stars[n] ?? 0, stars) } };
       }
       const recordedScore = mode === "pvp" && r.pvp
-        ? Math.max(...r.pvp.knocked) * 100 + Math.max(...r.pvp.points)
+        ? Math.max(...r.pvp.points)
         : r.score;
       if (recordedScore > 0) {
         const res = addRecord(p, mode, recordedScore, T[lang].player);
@@ -380,7 +380,7 @@ export default function AsykGame() {
                   </h2>
                   <div className="mt-4 grid w-full grid-cols-2 gap-2 text-center">
                     {[0, 1].map((i) => (
-                      <div key={i} className={`rounded border bg-black/25 p-3 ${result.win === (i === 0) ? "border-[#ffd766]" : "border-[#e2b75a]/30"}`}>
+                       <div key={i} className={`rounded border bg-black/25 p-3 ${result.pvp && (result.pvp.knocked[0] !== result.pvp.knocked[1] || result.pvp.points[0] !== result.pvp.points[1]) && result.win === (i === 0) ? "border-[#ffd766]" : "border-[#e2b75a]/30"}`}>
                         <div className="text-xs text-[#7fe3d0]">{t.player} {i + 1}</div>
                         <div className="font-serif text-4xl font-bold">{result.pvp!.knocked[i]}</div>
                         <div className="text-[11px] text-[#f4ecd8]/60">{t.knocked} · {result.pvp!.points[i]}</div>
