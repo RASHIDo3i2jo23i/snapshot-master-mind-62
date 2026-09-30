@@ -231,7 +231,7 @@ export default function AsykGame() {
                  <ModeCard title={t.modeFree} desc={t.modeFreeDesc} onClick={() => start("free")} primary />
                 <ModeCard title={t.modeCampaign} desc={t.modeCampaignDesc} onClick={() => go("levels")} />
                 <ModeCard title={t.modePvp} desc={t.modePvpDesc} onClick={() => start("pvp")} />
-                <ModeCard title={t.modeAlshy} desc={t.modeAlshyDesc} onClick={() => start("alshy")} />
+                 <ModeCard title={lang === "kk" ? "🎲 Алшы" : lang === "ru" ? "🎲 Алшы" : "🎲 Alshy"} desc={t.modeAlshyDesc} onClick={() => start("alshy")} />
               </div>
               <div className="mt-3 grid w-full grid-cols-3 gap-2">
                 <SmallBtn onClick={() => go("shop")}>{t.shop}</SmallBtn>
@@ -265,7 +265,7 @@ export default function AsykGame() {
                        <div className="w-full text-[10px] leading-tight text-[#bff0e4]">{t.levelHints[i]}</div>
                       <div className="mt-1 text-xs tracking-widest text-[#ffd766]">
                         {"★".repeat(st)}
-                        <span className="text-white/25">{"★".repeat(3 - st)}</span>
+                        <span className="text-white/25">{"★".repeat(Math.max(0, 3 - st))}</span>
                       </div>
                      </Button>
                   );
