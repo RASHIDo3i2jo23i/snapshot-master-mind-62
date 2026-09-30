@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AsykEngine, type EndResult, type PvpState, W, H } from "@/lib/asyk/engine";
 import { Sfx } from "@/lib/asyk/audio";
 import { LANGS, T, type Lang } from "@/lib/asyk/i18n";
-import { ALBUM_UNLOCK, ALSHY_LEVEL, FREE_LEVEL, LEVELS, PVP_LEVEL, type LevelDef, type ModeId } from "@/lib/asyk/levels";
+import { ALBUM_UNLOCK, ALSHY_LEVEL, FREE_LEVEL, LEVELS, PVP_LEVEL, formation, type Formation, type LevelDef, type ModeId } from "@/lib/asyk/levels";
 import { SKINS, SKIN_IDS, type SkinId } from "@/lib/asyk/skins";
 import { addRecord, DEFAULT_PROGRESS, loadProgress, saveProgress, unlockedLevel, type Progress } from "@/lib/asyk/progress";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,7 @@ export default function AsykGame() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sfxRef = useRef<Sfx | null>(null);
   const progressRef = useRef(progress);
+  const freeLevelRef = useRef<LevelDef>(FREE_LEVEL);
   progressRef.current = progress;
   const t = T[lang];
 
@@ -94,7 +95,7 @@ export default function AsykGame() {
     sfx.enabled = soundOn;
     const engine = new AsykEngine(
       canvasRef.current,
-      { mode, level: levelFor(mode, levelIdx), skin: progressRef.current.skin },
+      { mode, level: mode === "free" ? freeLevelRef.current : levelFor(mode, levelIdx), skin: progressRef.current.skin },
       sfx,
       { onScore: setScore, onThrows: setThrowsLeft, onTime: setTimeLeft, onPvp: setPvp, onEnd: handleEnd },
     );
@@ -107,10 +108,16 @@ export default function AsykGame() {
   const start = (m: ModeId, idx = 0) => {
     sfxRef.current?.resume();
     sfxRef.current?.click();
+    if (m === "free") {
+      const shapes: Formation[] = ["ring", "line", "arc", "diamond", "clusters", "spiral"];
+      const shape = shapes[Math.floor(Math.random() * shapes.length)] ?? "ring";
+      const count = 3 + Math.floor(Math.random() * 6);
+      freeLevelRef.current = { asyks: formation(count, shape, true), throws: Math.max(5, count) };
+    }
     setMode(m);
     setLevelIdx(idx);
     setScore(0);
-    setThrowsLeft(levelFor(m, idx).throws);
+    setThrowsLeft(m === "free" ? freeLevelRef.current.throws : levelFor(m, idx).throws);
     setPvp(null);
     setTimeLeft(null);
     setRunId((n) => n + 1);
@@ -204,7 +211,7 @@ export default function AsykGame() {
               )}
             </div>
           )}
-          {screen === "playing" && mode === "pvp" && pvp && !canvasRef.current?.hasPointerCapture(-1) && (
+          {screen === "playing" && mode === "pvp" && pvp && (
             <div className="pointer-events-none absolute inset-x-0 top-[8%] flex justify-center">
               <span className="rounded bg-[#08383b]/90 px-4 py-1.5 text-sm font-black text-[#ffd766] shadow-lg sm:text-lg">
                 🎯 {t.turn}: {t.player} {pvp.turn + 1}
