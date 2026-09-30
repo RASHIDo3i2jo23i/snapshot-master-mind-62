@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AsykEngine, type EndResult, type PvpState, W, H } from "@/lib/asyk/engine";
 import { Sfx } from "@/lib/asyk/audio";
 import { LANGS, T, type Lang } from "@/lib/asyk/i18n";
-import { ALBUM_UNLOCK, ALSHY_LEVEL, FREE_LEVEL, LEVELS, PVP_LEVEL, type LevelDef, type ModeId } from "@/lib/asyk/levels";
+import { ALBUM_UNLOCK, ALSHY_LEVEL, FREE_LEVEL, LEVELS, PVP_LEVEL, formation, type Formation, type LevelDef, type ModeId } from "@/lib/asyk/levels";
 import { SKINS, SKIN_IDS, type SkinId } from "@/lib/asyk/skins";
 import { addRecord, DEFAULT_PROGRESS, loadProgress, saveProgress, unlockedLevel, type Progress } from "@/lib/asyk/progress";
+import { Button } from "@/components/ui/button";
 
 type Screen = "menu" | "levels" | "shop" | "album" | "records" | "playing" | "result";
 
@@ -32,10 +33,12 @@ export default function AsykGame() {
   const [soundOn, setSoundOn] = useState(true);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [recTab, setRecTab] = useState<ModeId>("free");
+  const [albumCard, setAlbumCard] = useState<number | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const sfxRef = useRef<Sfx | null>(null);
   const progressRef = useRef(progress);
+  const freeLevelRef = useRef<LevelDef>(FREE_LEVEL);
   progressRef.current = progress;
   const t = T[lang];
 
@@ -70,8 +73,11 @@ export default function AsykGame() {
         const n = levelIdx + 1;
         p = { ...p, stars: { ...p.stars, [n]: Math.max(p.stars[n] ?? 0, stars) } };
       }
-      if (mode !== "pvp" && r.score > 0) {
-        const res = addRecord(p, mode, r.score, T[lang].player);
+      const recordedScore = mode === "pvp" && r.pvp
+        ? Math.max(...r.pvp.points)
+        : r.score;
+      if (recordedScore > 0) {
+        const res = addRecord(p, mode, recordedScore, T[lang].player);
         p = res.progress;
         rank = res.rank;
       }
@@ -89,7 +95,7 @@ export default function AsykGame() {
     sfx.enabled = soundOn;
     const engine = new AsykEngine(
       canvasRef.current,
-      { mode, level: levelFor(mode, levelIdx), skin: progressRef.current.skin },
+      { mode, level: mode === "free" ? freeLevelRef.current : levelFor(mode, levelIdx), skin: progressRef.current.skin },
       sfx,
       { onScore: setScore, onThrows: setThrowsLeft, onTime: setTimeLeft, onPvp: setPvp, onEnd: handleEnd },
     );
@@ -102,10 +108,16 @@ export default function AsykGame() {
   const start = (m: ModeId, idx = 0) => {
     sfxRef.current?.resume();
     sfxRef.current?.click();
+    if (m === "free") {
+      const shapes: Formation[] = ["ring", "line", "arc", "diamond", "clusters", "spiral"];
+      const shape = shapes[Math.floor(Math.random() * shapes.length)] ?? "ring";
+      const count = 3 + Math.floor(Math.random() * 6);
+      freeLevelRef.current = { asyks: formation(count, shape, true), throws: Math.max(5, count) };
+    }
     setMode(m);
     setLevelIdx(idx);
     setScore(0);
-    setThrowsLeft(levelFor(m, idx).throws);
+    setThrowsLeft(m === "free" ? freeLevelRef.current.throws : levelFor(m, idx).throws);
     setPvp(null);
     setTimeLeft(null);
     setRunId((n) => n + 1);
@@ -130,39 +142,39 @@ export default function AsykGame() {
   const bestFree = progress.records.free?.[0]?.score ?? 0;
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col items-center bg-[#08383b] px-3 py-4 text-[#f4ecd8]">
-      <div className="flex w-full max-w-[560px] items-center justify-between gap-2">
+    <div className="relative flex min-h-[100dvh] w-full flex-col items-center bg-[#08383b] px-2 py-2 text-[#f4ecd8] sm:px-3 sm:py-4">
+      <div className="grid w-full max-w-[560px] grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
         <div className="flex items-center gap-1 rounded-full border border-[#e2b75a]/40 bg-black/25 p-1">
           {LANGS.map((l) => (
-            <button
+            <Button
               key={l.code}
               onClick={() => pickLang(l.code)}
-              className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+              className={`min-w-0 flex-1 rounded-full px-1.5 py-1 text-[10px] font-semibold transition-colors sm:px-3 sm:text-xs ${
                 lang === l.code ? "bg-[#e2b75a] text-[#08383b]" : "text-[#f4ecd8]/80 hover:text-[#f4ecd8]"
               }`}
             >
               {l.label}
-            </button>
+            </Button>
           ))}
         </div>
         <div className="flex items-center gap-2">
-          <span className="rounded-full border border-[#e2b75a]/40 bg-black/25 px-3 py-1.5 text-xs font-bold text-[#ffd766]">
-            ◈ {progress.coins} {t.coins}
+          <span className="shrink-0 rounded-full border border-[#e2b75a]/40 bg-black/25 px-2 py-1.5 text-xs font-bold text-[#ffd766]">
+            ◈ {progress.coins}
           </span>
-          <button
+          <Button
             onClick={() => setSoundOn((s) => !s)}
-            className="rounded-full border border-[#e2b75a]/40 bg-black/25 px-3 py-1.5 text-xs font-semibold"
+            className="h-8 w-8 shrink-0 rounded-full border border-[#e2b75a]/40 bg-black/25 p-0 text-xs font-semibold"
             aria-label={t.sound}
           >
             {soundOn ? "🔊" : "🔇"}
-          </button>
+          </Button>
         </div>
       </div>
 
       <div className="relative mt-3 w-full max-w-[560px]">
         <div
-          className="relative overflow-hidden rounded-3xl border-4 border-[#e2b75a]/70 shadow-[0_18px_60px_rgba(0,0,0,0.55)]"
-          style={{ aspectRatio: `${W} / ${H}` }}
+          className="relative overflow-hidden rounded-lg border-2 border-[#e2b75a]/70 shadow-[0_18px_60px_rgba(0,0,0,0.55)]"
+          style={screen === "playing" ? { aspectRatio: `${W} / ${H}` } : { height: "min(760px, calc(100dvh - 76px))", minHeight: 520 }}
         >
           {screen === "playing" ? (
             <canvas key={runId} ref={canvasRef} className="block h-full w-full touch-none select-none" />
@@ -171,12 +183,12 @@ export default function AsykGame() {
           )}
 
           {screen === "playing" && (
-            <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-3">
+            <div className="pointer-events-none absolute inset-x-0 top-0 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-1 p-2 sm:gap-2 sm:p-3">
               {mode === "pvp" && pvp ? (
                 <>
-                  <Badge label={`${t.player} 1${pvp.turn === 0 ? " ◀" : ""}`} value={`${pvp.knocked[0]} · ${pvp.left[0]}`} active={pvp.turn === 0} />
-                  <MenuBtn onClick={() => go("menu")} label={t.menu} />
-                  <Badge label={`${pvp.turn === 1 ? "▶ " : ""}${t.player} 2`} value={`${pvp.knocked[1]} · ${pvp.left[1]}`} active={pvp.turn === 1} />
+                   <Badge label={`${pvp.turn === 0 ? "🎯 " : ""}${t.player} 1`} value={`${pvp.knocked[0]} / ${pvp.left[0]}`} active={pvp.turn === 0} />
+                   <MenuBtn onClick={() => go("menu")} label={t.menu} />
+                   <Badge label={`${pvp.turn === 1 ? "🎯 " : ""}${t.player} 2`} value={`${pvp.knocked[1]} / ${pvp.left[1]}`} active={pvp.turn === 1} />
                 </>
               ) : (
                 <>
@@ -199,6 +211,13 @@ export default function AsykGame() {
               )}
             </div>
           )}
+          {screen === "playing" && mode === "pvp" && pvp && (
+            <div className="pointer-events-none absolute inset-x-0 top-[8%] flex justify-center">
+              <span className="rounded bg-[#08383b]/90 px-4 py-1.5 text-sm font-black text-[#ffd766] shadow-lg sm:text-lg">
+                🎯 {t.turn}: {t.player} {pvp.turn + 1}
+              </span>
+            </div>
+          )}
 
           {screen === "menu" && (
             <Overlay>
@@ -209,23 +228,19 @@ export default function AsykGame() {
                 {t.best}: <span className="font-bold text-[#ffd766]">{bestFree}</span> · {t.skinName[progress.skin]}
               </p>
               <div className="mt-4 grid w-full gap-2">
-                <ModeCard title={t.modeFree} desc={t.modeFreeDesc} onClick={() => start("free")} primary />
+                 <ModeCard title={t.modeFree} desc={t.modeFreeDesc} onClick={() => start("free")} primary />
                 <ModeCard title={t.modeCampaign} desc={t.modeCampaignDesc} onClick={() => go("levels")} />
                 <ModeCard title={t.modePvp} desc={t.modePvpDesc} onClick={() => start("pvp")} />
-                <ModeCard title={t.modeAlshy} desc={t.modeAlshyDesc} onClick={() => start("alshy")} />
+                 <ModeCard title={lang === "kk" ? "🎲 Алшы" : lang === "ru" ? "🎲 Алшы" : "🎲 Alshy"} desc={t.modeAlshyDesc} onClick={() => start("alshy")} />
               </div>
               <div className="mt-3 grid w-full grid-cols-3 gap-2">
                 <SmallBtn onClick={() => go("shop")}>{t.shop}</SmallBtn>
                 <SmallBtn onClick={() => go("album")}>{t.album}</SmallBtn>
                 <SmallBtn onClick={() => go("records")}>{t.records}</SmallBtn>
               </div>
-              <button onClick={() => setAboutOpen(true)} className="mt-2 text-xs font-semibold text-[#7fe3d0] underline-offset-2 hover:underline">
+               <Button onClick={() => setAboutOpen(true)} className="mt-2 h-auto bg-transparent p-1 text-xs font-semibold text-[#7fe3d0] underline-offset-2 hover:underline">
                 {t.about}
-              </button>
-              <p className="mt-3 max-w-[340px] text-center text-[11px] leading-relaxed text-[#f4ecd8]/60">
-                <span className="font-semibold text-[#7fe3d0]">{t.facesTitle}: </span>
-                {t.facesText}
-              </p>
+               </Button>
             </Overlay>
           )}
 
@@ -238,21 +253,21 @@ export default function AsykGame() {
                   const open = n <= unlocked;
                   const st = progress.stars[n] ?? 0;
                   return (
-                    <button
+                     <Button
                       key={n}
                       disabled={!open}
                       onClick={() => start("campaign", i)}
-                      className={`rounded-2xl border-2 px-2 py-3 text-center transition-colors ${
+                       className={`h-auto min-h-19 min-w-0 flex-col gap-0 rounded border-2 px-1 py-2 text-center transition-colors ${
                         open ? "border-[#e2b75a]/70 bg-black/25 hover:bg-[#ffd766]/10" : "border-white/10 bg-black/30 opacity-45"
                       }`}
                     >
                       <div className="font-serif text-2xl font-bold text-[#ffd766]">{open ? n : "🔒"}</div>
-                      <div className="text-[10px] text-[#bff0e4]">{t.levelHints[i]}</div>
+                       <div className="w-full text-[10px] leading-tight text-[#bff0e4]">{t.levelHints[i]}</div>
                       <div className="mt-1 text-xs tracking-widest text-[#ffd766]">
                         {"★".repeat(st)}
-                        <span className="text-white/25">{"★".repeat(3 - st)}</span>
+                        <span className="text-white/25">{"★".repeat(Math.max(0, 3 - st))}</span>
                       </div>
-                    </button>
+                     </Button>
                   );
                 })}
               </div>
@@ -293,15 +308,17 @@ export default function AsykGame() {
               <div className="mt-4 grid w-full grid-cols-2 gap-2">
                 {t.albumCards.map((c, i) => {
                   const need = ALBUM_UNLOCK[i] ?? 99;
-                  const open = (progress.stars[need] ?? 0) > 0;
+                   const open = need === 0 || (progress.stars[need] ?? 0) > 0;
                   return (
-                    <div
+                     <Button
                       key={c.title}
-                      className={`rounded-2xl border-2 p-3 ${open ? "border-[#e2b75a]/70 bg-black/25" : "border-white/10 bg-black/30"}`}
+                       disabled={!open}
+                       onClick={() => setAlbumCard(i)}
+                       className={`h-auto min-h-20 min-w-0 flex-col items-start justify-start gap-1 whitespace-normal rounded border-2 p-2 text-left ${open ? "border-[#e2b75a]/70 bg-black/25" : "border-white/10 bg-black/30 opacity-60"}`}
                     >
-                      <div className="font-serif text-base font-bold text-[#ffd766]">{open ? c.title : "🔒 " + t.locked}</div>
-                      <p className="mt-1 text-[11px] leading-snug text-[#f4ecd8]/80">{open ? c.text : `${t.unlockAt} ${need}`}</p>
-                    </div>
+                       <div className="text-sm font-bold text-[#ffd766]">{open ? `📖 ${c.title}` : `🔒 ${t.unlockAt} ${need}`}</div>
+                       {open && <p className="line-clamp-2 text-[11px] leading-snug text-[#f4ecd8]/80">{c.text}</p>}
+                     </Button>
                   );
                 })}
               </div>
@@ -323,14 +340,14 @@ export default function AsykGame() {
                 />
               </label>
               <div className="mt-3 flex w-full gap-1">
-                {(["free", "campaign", "alshy"] as ModeId[]).map((m) => (
-                  <button
+                {(["free", "campaign", "pvp", "alshy"] as ModeId[]).map((m) => (
+                   <Button
                     key={m}
                     onClick={() => setRecTab(m)}
-                    className={`flex-1 rounded-xl px-2 py-1.5 text-xs font-semibold ${recTab === m ? "bg-[#e2b75a] text-[#08383b]" : "bg-black/25 text-[#f4ecd8]/80"}`}
+                     className={`h-auto min-w-0 flex-1 whitespace-normal rounded px-1 py-1.5 text-[10px] leading-tight font-semibold sm:text-xs ${recTab === m ? "bg-[#e2b75a] text-[#08383b]" : "bg-black/25 text-[#f4ecd8]/80"}`}
                   >
-                    {m === "free" ? t.modeFree : m === "campaign" ? t.modeCampaign : t.modeAlshy}
-                  </button>
+                     {m === "free" ? t.modeFree : m === "campaign" ? t.modeCampaign : m === "pvp" ? t.modePvp : t.modeAlshy}
+                   </Button>
                 ))}
               </div>
               <div className="mt-3 w-full overflow-hidden rounded-2xl border border-[#e2b75a]/40">
@@ -341,7 +358,7 @@ export default function AsykGame() {
                     <div key={i} className={`flex items-center gap-3 px-3 py-2 text-sm ${i % 2 ? "bg-black/15" : "bg-black/30"}`}>
                       <span className={`w-6 font-serif font-bold ${i < 3 ? "text-[#ffd766]" : "text-[#bff0e4]"}`}>{["🥇", "🥈", "🥉"][i] ?? i + 1}</span>
                       <span className="flex-1 truncate">{r.name}</span>
-                      <span className="text-[10px] text-[#f4ecd8]/50">{r.date}</span>
+                       <span className="hidden text-[10px] text-[#f4ecd8]/50 sm:inline">{r.date}</span>
                       <span className="w-14 text-right font-bold text-[#ffd766]">{r.score}</span>
                     </div>
                   ))
@@ -356,12 +373,14 @@ export default function AsykGame() {
               <Ornament />
               {mode === "pvp" && result.pvp ? (
                 <>
-                  <h2 className="text-center font-serif text-4xl font-bold text-[#ffd766]">
-                    {t.player} {result.win ? 1 : 2} {t.pvpWinner}
+                   <h2 className="text-center font-serif text-3xl font-bold text-[#ffd766]">
+                     {result.pvp.knocked[0] === result.pvp.knocked[1] && result.pvp.points[0] === result.pvp.points[1]
+                       ? (lang === "kk" ? "Тең ойын!" : lang === "ru" ? "Ничья!" : "Draw!")
+                       : `${t.player} ${result.win ? 1 : 2} ${t.pvpWinner}`}
                   </h2>
                   <div className="mt-4 grid w-full grid-cols-2 gap-2 text-center">
                     {[0, 1].map((i) => (
-                      <div key={i} className="rounded-2xl border border-[#e2b75a]/50 bg-black/25 p-3">
+                       <div key={i} className={`rounded border bg-black/25 p-3 ${result.pvp && (result.pvp.knocked[0] !== result.pvp.knocked[1] || result.pvp.points[0] !== result.pvp.points[1]) && result.win === (i === 0) ? "border-[#ffd766]" : "border-[#e2b75a]/30"}`}>
                         <div className="text-xs text-[#7fe3d0]">{t.player} {i + 1}</div>
                         <div className="font-serif text-4xl font-bold">{result.pvp!.knocked[i]}</div>
                         <div className="text-[11px] text-[#f4ecd8]/60">{t.knocked} · {result.pvp!.points[i]}</div>
@@ -413,9 +432,18 @@ export default function AsykGame() {
               <span className="font-semibold">{t.howTo}: </span>
               {t.howToText}
             </p>
-            <button onClick={() => setAboutOpen(false)} className="mt-6 w-full rounded-2xl bg-[#e2b75a] px-6 py-2.5 font-bold text-[#08383b]">
+              <Button onClick={() => setAboutOpen(false)} className="mt-6 w-full rounded bg-[#e2b75a] px-6 py-2.5 font-bold text-[#08383b]">
               {t.close}
-            </button>
+              </Button>
+          </div>
+        </div>
+      )}
+      {albumCard !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setAlbumCard(null)}>
+          <div className="w-full max-w-[400px] rounded border border-[#e2b75a] bg-[#0d4a4e] p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-xl font-bold text-[#ffd766]">📖 {t.albumCards[albumCard]?.title}</h3>
+            <p className="mt-3 text-sm leading-relaxed">{t.albumCards[albumCard]?.text}</p>
+            <Button onClick={() => setAlbumCard(null)} className="mt-5 w-full bg-[#e2b75a] text-[#08383b]">{t.close}</Button>
           </div>
         </div>
       )}
@@ -425,26 +453,26 @@ export default function AsykGame() {
 
 function Badge({ label, value, active }: { label: string; value: number | string; active?: boolean }) {
   return (
-    <div className={`rounded-2xl border bg-black/45 px-4 py-1.5 text-center ${active ? "border-[#ffd766]" : "border-[#e2b75a]/60"}`}>
-      <div className="text-[10px] uppercase tracking-widest text-[#7fe3d0]">{label}</div>
-      <div className="font-serif text-xl font-bold text-[#ffd766]">{value}</div>
+    <div className={`min-w-0 rounded border bg-black/45 px-1 py-1 text-center sm:px-4 sm:py-1.5 ${active ? "border-[#ffd766]" : "border-[#e2b75a]/60"}`}>
+      <div className="truncate text-[9px] text-[#7fe3d0] sm:text-[10px]">{label}</div>
+      <div className="text-base font-bold text-[#ffd766] sm:text-xl">{value}</div>
     </div>
   );
 }
 
 function MenuBtn({ onClick, label }: { onClick: () => void; label: string }) {
   return (
-    <button onClick={onClick} className="pointer-events-auto rounded-full border border-[#e2b75a]/60 bg-black/45 px-3 py-1.5 text-xs font-semibold">
+    <Button onClick={onClick} className="pointer-events-auto h-8 rounded-full border border-[#e2b75a]/60 bg-black/45 px-3 py-1.5 text-xs font-semibold">
       {label}
-    </button>
+    </Button>
   );
 }
 
 function Overlay({ children }: { children: React.ReactNode }) {
   return (
-    <div className="absolute inset-0 overflow-y-auto bg-[#0d4a4e] px-5 py-6">
+    <div className="absolute inset-0 overflow-y-auto bg-[#0d4a4e] px-3 py-3 sm:px-5 sm:py-6">
       <div className="pointer-events-none absolute inset-0 opacity-25 [background:radial-gradient(circle_at_50%_30%,rgba(127,227,208,0.35),transparent_60%)]" />
-      <div className="relative mx-auto flex min-h-full w-full max-w-[400px] flex-col items-center justify-center">{children}</div>
+      <div className="relative mx-auto flex min-h-full w-full max-w-[400px] flex-col items-center justify-center py-3">{children}</div>
     </div>
   );
 }
@@ -459,44 +487,44 @@ function Ornament() {
 
 function ModeCard({ title, desc, onClick, primary }: { title: string; desc: string; onClick: () => void; primary?: boolean }) {
   return (
-    <button
+    <Button
       onClick={onClick}
-      className={`rounded-2xl border-2 px-4 py-2.5 text-left transition-transform hover:scale-[1.01] active:scale-95 ${
+      className={`rounded border-2 px-4 py-2.5 text-left transition-transform hover:scale-[1.01] active:scale-95 ${
         primary ? "border-[#ffd766] bg-gradient-to-b from-[#ffd766] to-[#e2b75a] text-[#08383b]" : "border-[#7fe3d0]/30 bg-black/20"
       }`}
     >
       <span className={`block text-base font-bold ${primary ? "" : "text-[#f4ecd8]"}`}>{title}</span>
       <span className={`block text-[11px] ${primary ? "text-[#08383b]/75" : "text-[#f4ecd8]/60"}`}>{desc}</span>
-    </button>
+    </Button>
   );
 }
 
 function SmallBtn({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} className="rounded-xl border border-[#e2b75a]/50 bg-black/20 px-2 py-2 text-xs font-semibold text-[#ffd766]">
+    <Button onClick={onClick} className="rounded border border-[#e2b75a]/50 bg-black/20 px-2 py-2 text-xs font-semibold text-[#ffd766]">
       {children}
-    </button>
+    </Button>
   );
 }
 
 function BackBtn({ onClick, label }: { onClick: () => void; label: string }) {
   return (
-    <button onClick={onClick} className="mt-3 rounded-xl border border-[#7fe3d0]/50 px-4 py-2 text-xs font-semibold text-[#bff0e4]">
+    <Button onClick={onClick} className="mt-3 rounded border border-[#7fe3d0]/50 px-4 py-2 text-xs font-semibold text-[#bff0e4]">
       {label}
-    </button>
+    </Button>
   );
 }
 
 function PrimaryBtn({ onClick, children, secondary }: { onClick: () => void; children: React.ReactNode; secondary?: boolean }) {
   return (
-    <button
+    <Button
       onClick={onClick}
-      className={`mt-3 w-full max-w-[280px] rounded-2xl px-6 py-3 text-lg font-bold shadow-lg transition-transform hover:scale-[1.02] active:scale-95 ${
+      className={`mt-3 w-full max-w-[280px] rounded px-6 py-3 text-lg font-bold shadow-lg transition-transform hover:scale-[1.02] active:scale-95 ${
         secondary ? "border-2 border-[#e2b75a] text-[#ffd766]" : "bg-gradient-to-b from-[#ffd766] to-[#e2b75a] text-[#08383b]"
       }`}
     >
       {children}
-    </button>
+    </Button>
   );
 }
 
@@ -513,7 +541,7 @@ function SkinRow(props: {
 }) {
   const sk = SKINS[props.id];
   return (
-    <div className={`flex items-center gap-3 rounded-2xl border-2 px-3 py-2.5 ${props.equipped ? "border-[#ffd766] bg-[#ffd766]/10" : "border-[#7fe3d0]/25 bg-black/20"}`}>
+    <div className={`flex items-center gap-3 rounded border-2 px-3 py-2.5 ${props.equipped ? "border-[#ffd766] bg-[#ffd766]/10" : "border-[#7fe3d0]/25 bg-black/20"}`}>
       <span
         className="h-8 w-11 shrink-0 rounded-[40%] border-2"
         style={{
@@ -529,17 +557,17 @@ function SkinRow(props: {
       {props.equipped ? (
         <span className="text-xs font-bold text-[#ffd766]">✓ {props.labels.equipped}</span>
       ) : props.owned ? (
-        <button onClick={props.onEquip} className="rounded-xl border border-[#e2b75a] px-3 py-1.5 text-xs font-bold text-[#ffd766]">
+        <Button onClick={props.onEquip} className="rounded border border-[#e2b75a] px-3 py-1.5 text-xs font-bold text-[#ffd766]">
           {props.labels.equip}
-        </button>
+        </Button>
       ) : (
-        <button
+        <Button
           disabled={!props.canBuy}
           onClick={props.onBuy}
-          className="rounded-xl bg-[#e2b75a] px-3 py-1.5 text-xs font-bold text-[#08383b] disabled:opacity-40"
+          className="rounded bg-[#e2b75a] px-3 py-1.5 text-xs font-bold text-[#08383b] disabled:opacity-40"
         >
           {sk.price} ◈
-        </button>
+        </Button>
       )}
     </div>
   );

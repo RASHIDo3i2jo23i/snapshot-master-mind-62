@@ -2,6 +2,12 @@
 @source "../src";
 @import "tw-animate-css";
 
+@font-face {
+  font-family: "Game Emoji";
+  src: url("/fonts/NotoEmoji.ttf") format("truetype");
+  font-display: swap;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 /*
@@ -140,5 +146,6 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: system-ui, "Game Emoji", sans-serif;
   }
 }

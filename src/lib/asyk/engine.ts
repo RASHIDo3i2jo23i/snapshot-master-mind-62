@@ -18,7 +18,7 @@ const DRAG_MAX = 230;
 
 export type AsykKind = "plain" | "gold";
 
-export const PRAISE = ["Жарайсың!", "Керемет!", "Шебер!", "Мерген!"];
+export const PRAISE = ["🎯 Дөп тиді!", "💥 Жарайсың!", "✨ Шебер!", "🏹 Мерген!"];
 
 interface Asyk {
   x: number;
@@ -137,6 +137,8 @@ export class AsykEngine {
   private shake = 0;
   private slowmo = 0;
   private finished = false;
+  private destroyed = false;
+  private endTimeout: ReturnType<typeof setTimeout> | null = null;
   private pattern: CanvasPattern | null = null;
   private groundDots: { x: number; y: number; r: number; l: boolean }[] = [];
   private pvp: PvpState = { turn: 0, knocked: [0, 0], points: [0, 0], left: [5, 5] };
@@ -256,6 +258,8 @@ export class AsykEngine {
   }
 
   destroy() {
+    this.destroyed = true;
+    if (this.endTimeout) clearTimeout(this.endTimeout);
     cancelAnimationFrame(this.raf);
     this.canvas.removeEventListener("pointerdown", this.onDown);
     this.canvas.removeEventListener("pointermove", this.onMove);
@@ -349,7 +353,7 @@ export class AsykEngine {
 
   private predict(aim: { dx: number; dy: number; power: number }) {
     const v = this.launchVel(aim);
-    const t = (2 * v.vz) / G;
+    const t = (v.vz + Math.sqrt(v.vz * v.vz + 12 * G)) / G;
     const w = this.wind();
     const pts: { x: number; y: number; z: number }[] = [];
     const steps = 26;
@@ -696,7 +700,7 @@ export class AsykEngine {
     this.sfx.stopWhistle();
     const pvp = this.opts.mode === "pvp" ? { ...this.pvp } : undefined;
     const res: EndResult = { win, score: this.score, coins: this.coins, throwsLeft: this.throwsLeft, pvp };
-    setTimeout(() => this.cb.onEnd(res), 500);
+    this.endTimeout = setTimeout(() => { if (!this.destroyed) this.cb.onEnd(res); }, 500);
   }
 
   // ---------- rendering ----------
@@ -980,7 +984,7 @@ export class AsykEngine {
     const w = this.wind();
     if (!w) return;
     ctx.save();
-    ctx.translate(CX, 118);
+    ctx.translate(CX, 165);
     const len = 30 + Math.min(90, Math.abs(w) / 2.6);
     const dir = Math.sign(w);
     const off = ((performance.now() / 12) % 20) * dir;
@@ -1001,7 +1005,7 @@ export class AsykEngine {
     ctx.fill();
     ctx.font = "600 18px Georgia, serif";
     ctx.textAlign = "center";
-    ctx.fillText(`Жел ${Math.round(Math.abs(w) / 20)}`, 0, 30);
+    ctx.fillText(`${w > 0 ? "→" : "←"}  ${Math.round(Math.abs(w) / 100)}`, 0, 30);
     ctx.restore();
   }
 
