@@ -451,26 +451,26 @@ export default function AsykGame() {
 
 function Badge({ label, value, active }: { label: string; value: number | string; active?: boolean }) {
   return (
-    <div className={`rounded-2xl border bg-black/45 px-4 py-1.5 text-center ${active ? "border-[#ffd766]" : "border-[#e2b75a]/60"}`}>
-      <div className="text-[10px] uppercase tracking-widest text-[#7fe3d0]">{label}</div>
-      <div className="font-serif text-xl font-bold text-[#ffd766]">{value}</div>
+    <div className={`min-w-0 rounded border bg-black/45 px-1 py-1 text-center sm:px-4 sm:py-1.5 ${active ? "border-[#ffd766]" : "border-[#e2b75a]/60"}`}>
+      <div className="truncate text-[9px] text-[#7fe3d0] sm:text-[10px]">{label}</div>
+      <div className="text-base font-bold text-[#ffd766] sm:text-xl">{value}</div>
     </div>
   );
 }
 
 function MenuBtn({ onClick, label }: { onClick: () => void; label: string }) {
   return (
-    <button onClick={onClick} className="pointer-events-auto rounded-full border border-[#e2b75a]/60 bg-black/45 px-3 py-1.5 text-xs font-semibold">
+    <Button onClick={onClick} className="pointer-events-auto h-8 rounded-full border border-[#e2b75a]/60 bg-black/45 px-3 py-1.5 text-xs font-semibold">
       {label}
-    </button>
+    </Button>
   );
 }
 
 function Overlay({ children }: { children: React.ReactNode }) {
   return (
-    <div className="absolute inset-0 overflow-y-auto bg-[#0d4a4e] px-5 py-6">
+    <div className="absolute inset-0 overflow-y-auto bg-[#0d4a4e] px-3 py-3 sm:px-5 sm:py-6">
       <div className="pointer-events-none absolute inset-0 opacity-25 [background:radial-gradient(circle_at_50%_30%,rgba(127,227,208,0.35),transparent_60%)]" />
-      <div className="relative mx-auto flex min-h-full w-full max-w-[400px] flex-col items-center justify-center">{children}</div>
+      <div className="relative mx-auto flex min-h-full w-full max-w-[400px] flex-col items-center justify-center py-3">{children}</div>
     </div>
   );
 }
@@ -485,44 +485,44 @@ function Ornament() {
 
 function ModeCard({ title, desc, onClick, primary }: { title: string; desc: string; onClick: () => void; primary?: boolean }) {
   return (
-    <button
+    <Button
       onClick={onClick}
-      className={`rounded-2xl border-2 px-4 py-2.5 text-left transition-transform hover:scale-[1.01] active:scale-95 ${
+      className={`rounded border-2 px-4 py-2.5 text-left transition-transform hover:scale-[1.01] active:scale-95 ${
         primary ? "border-[#ffd766] bg-gradient-to-b from-[#ffd766] to-[#e2b75a] text-[#08383b]" : "border-[#7fe3d0]/30 bg-black/20"
       }`}
     >
       <span className={`block text-base font-bold ${primary ? "" : "text-[#f4ecd8]"}`}>{title}</span>
       <span className={`block text-[11px] ${primary ? "text-[#08383b]/75" : "text-[#f4ecd8]/60"}`}>{desc}</span>
-    </button>
+    </Button>
   );
 }
 
 function SmallBtn({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} className="rounded-xl border border-[#e2b75a]/50 bg-black/20 px-2 py-2 text-xs font-semibold text-[#ffd766]">
+    <Button onClick={onClick} className="rounded border border-[#e2b75a]/50 bg-black/20 px-2 py-2 text-xs font-semibold text-[#ffd766]">
       {children}
-    </button>
+    </Button>
   );
 }
 
 function BackBtn({ onClick, label }: { onClick: () => void; label: string }) {
   return (
-    <button onClick={onClick} className="mt-3 rounded-xl border border-[#7fe3d0]/50 px-4 py-2 text-xs font-semibold text-[#bff0e4]">
+    <Button onClick={onClick} className="mt-3 rounded border border-[#7fe3d0]/50 px-4 py-2 text-xs font-semibold text-[#bff0e4]">
       {label}
-    </button>
+    </Button>
   );
 }
 
 function PrimaryBtn({ onClick, children, secondary }: { onClick: () => void; children: React.ReactNode; secondary?: boolean }) {
   return (
-    <button
+    <Button
       onClick={onClick}
-      className={`mt-3 w-full max-w-[280px] rounded-2xl px-6 py-3 text-lg font-bold shadow-lg transition-transform hover:scale-[1.02] active:scale-95 ${
+      className={`mt-3 w-full max-w-[280px] rounded px-6 py-3 text-lg font-bold shadow-lg transition-transform hover:scale-[1.02] active:scale-95 ${
         secondary ? "border-2 border-[#e2b75a] text-[#ffd766]" : "bg-gradient-to-b from-[#ffd766] to-[#e2b75a] text-[#08383b]"
       }`}
     >
       {children}
-    </button>
+    </Button>
   );
 }
 
@@ -539,7 +539,7 @@ function SkinRow(props: {
 }) {
   const sk = SKINS[props.id];
   return (
-    <div className={`flex items-center gap-3 rounded-2xl border-2 px-3 py-2.5 ${props.equipped ? "border-[#ffd766] bg-[#ffd766]/10" : "border-[#7fe3d0]/25 bg-black/20"}`}>
+    <div className={`flex items-center gap-3 rounded border-2 px-3 py-2.5 ${props.equipped ? "border-[#ffd766] bg-[#ffd766]/10" : "border-[#7fe3d0]/25 bg-black/20"}`}>
       <span
         className="h-8 w-11 shrink-0 rounded-[40%] border-2"
         style={{
@@ -555,17 +555,17 @@ function SkinRow(props: {
       {props.equipped ? (
         <span className="text-xs font-bold text-[#ffd766]">✓ {props.labels.equipped}</span>
       ) : props.owned ? (
-        <button onClick={props.onEquip} className="rounded-xl border border-[#e2b75a] px-3 py-1.5 text-xs font-bold text-[#ffd766]">
+        <Button onClick={props.onEquip} className="rounded border border-[#e2b75a] px-3 py-1.5 text-xs font-bold text-[#ffd766]">
           {props.labels.equip}
-        </button>
+        </Button>
       ) : (
-        <button
+        <Button
           disabled={!props.canBuy}
           onClick={props.onBuy}
-          className="rounded-xl bg-[#e2b75a] px-3 py-1.5 text-xs font-bold text-[#08383b] disabled:opacity-40"
+          className="rounded bg-[#e2b75a] px-3 py-1.5 text-xs font-bold text-[#08383b] disabled:opacity-40"
         >
           {sk.price} ◈
-        </button>
+        </Button>
       )}
     </div>
   );
