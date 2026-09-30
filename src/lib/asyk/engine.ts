@@ -984,7 +984,7 @@ export class AsykEngine {
     const w = this.wind();
     if (!w) return;
     ctx.save();
-    ctx.translate(CX, 118);
+    ctx.translate(CX, 165);
     const len = 30 + Math.min(90, Math.abs(w) / 2.6);
     const dir = Math.sign(w);
     const off = ((performance.now() / 12) % 20) * dir;
